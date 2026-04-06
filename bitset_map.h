@@ -8,9 +8,7 @@
 #include <bit>
 #include <new>
 
-#define NOMINMAX
-#include <Windows.h>
-#include <intrin.h>
+#include <immintrin.h>
 
 
 namespace scw
@@ -46,6 +44,16 @@ namespace scw
 	class remap_map;
 
 
+	namespace platform
+	{
+		size_t get_page_size() noexcept;
+		[[nodiscard]] void* reserve(size_t dwSize);
+		[[nodiscard]] void* commit(void* lpAddress, size_t dwSize);
+		[[nodiscard]] bool free(void* lpAddress);
+		[[nodiscard]] bool decommit(void* lpAddress, size_t dwSize);
+	}
+
+
 	namespace implementation
 	{
 		template<class, uint32_t, use_generations_concept, const_iterator_concept, iterator_branch_concept>
@@ -57,9 +65,7 @@ namespace scw
 
 		[[nodiscard]] inline bool query_system_page_info() noexcept
 		{
-			SYSTEM_INFO system_info;
-			GetSystemInfo(&system_info);
-			OS_PAGE_SIZE = static_cast<size_t>(system_info.dwPageSize);
+			OS_PAGE_SIZE = platform::get_page_size();
 
 			return false;
 		}
@@ -509,7 +515,7 @@ namespace scw
 		}
 
 
-		void try_erase(handle p_handle) noexcept
+			void try_erase(handle p_handle) noexcept
 			requires c_generational
 		{
 			try_erase(p_handle.index, p_handle.generation);
@@ -523,7 +529,7 @@ namespace scw
 		}
 
 
-		void try_erase(T* p_element, uint32_t p_generation) noexcept
+			void try_erase(T* p_element, uint32_t p_generation) noexcept
 			requires c_generational
 		{
 			try_erase(static_cast<uint32_t>(node_of_(p_element) - m_data), p_generation);
@@ -537,8 +543,8 @@ namespace scw
 		}
 
 
-		// HELPERS
-		[[nodiscard]] T& at(uint32_t p_index) noexcept
+			// HELPERS
+			[[nodiscard]] T& at(uint32_t p_index) noexcept
 		{
 			return m_data[p_index].value;
 		}
@@ -586,7 +592,7 @@ namespace scw
 		}
 
 
-		[[nodiscard]] const T* try_at(uint32_t p_index, uint32_t p_generation) const noexcept
+			[[nodiscard]] const T* try_at(uint32_t p_index, uint32_t p_generation) const noexcept
 			requires c_generational
 		{
 			if (is_generation(p_index, p_generation))
@@ -610,7 +616,7 @@ namespace scw
 		}
 
 
-		[[nodiscard]] T* try_at(handle p_handle) noexcept
+			[[nodiscard]] T* try_at(handle p_handle) noexcept
 			requires c_generational
 		{
 			return try_at(p_handle.index, p_handle.generation);
@@ -624,7 +630,7 @@ namespace scw
 		}
 
 
-		[[nodiscard]] const T* try_at(handle p_handle) const noexcept
+			[[nodiscard]] const T* try_at(handle p_handle) const noexcept
 			requires c_generational
 		{
 			return try_at(p_handle.index, p_handle.generation);
@@ -638,7 +644,7 @@ namespace scw
 		}
 
 
-		[[nodiscard]] T* try_at(T* p_element, uint32_t p_generation) noexcept
+			[[nodiscard]] T* try_at(T* p_element, uint32_t p_generation) noexcept
 			requires c_generational
 		{
 			if (is_generation(p_element, p_generation))
@@ -662,7 +668,7 @@ namespace scw
 		}
 
 
-		[[nodiscard]] const T* try_at(const T* p_element, uint32_t p_generation) const noexcept
+			[[nodiscard]] const T* try_at(const T* p_element, uint32_t p_generation) const noexcept
 			requires c_generational
 		{
 			if (is_generation(p_element, p_generation))
@@ -686,7 +692,7 @@ namespace scw
 		}
 
 
-		[[nodiscard]] bool is_alive(uint32_t p_index) const noexcept
+			[[nodiscard]] bool is_alive(uint32_t p_index) const noexcept
 		{
 			return get_bit_(p_index);
 		}
@@ -854,7 +860,7 @@ namespace scw
 					{
 						if (current_index == last_index >> 6U)
 						{
-							const uint64_t shift_amount = 64ULL - static_cast<uint64_t>(last_index & 63U) - 1ULL;
+							const uint64_t shift_amount = static_cast<uint64_t>(~last_index & 63U);
 							const uint64_t pop_count = _mm_popcnt_u64(m_skip_data[current_index] & UINT64_MAX >> shift_amount);
 							counted_elements += pop_count;
 							free_slots += 64ULL - pop_count - shift_amount;
@@ -1014,7 +1020,7 @@ namespace scw
 				return begin();
 			}
 
-			const uint64_t shift_amount = 64ULL - static_cast<uint64_t>(m_high_water_mark & 63U) - 1ULL;
+			const uint64_t shift_amount = static_cast<uint64_t>(~m_high_water_mark & 63U);
 			const uint64_t word = m_skip_data[m_high_water_mark >> 6U] & UINT64_MAX >> shift_amount >> 1ULL;
 			iterator to_return = iterator(m_data, m_skip_data + (m_high_water_mark >> 6U), static_cast<size_t>(m_high_water_mark), word);
 
@@ -1043,7 +1049,7 @@ namespace scw
 				return begin();
 			}
 
-			const uint64_t shift_amount = 64ULL - static_cast<uint64_t>(m_high_water_mark & 63U) - 1ULL;
+			const uint64_t shift_amount = static_cast<uint64_t>(~m_high_water_mark & 63U);
 			const uint64_t word = m_skip_data[m_high_water_mark >> 6U] & UINT64_MAX >> shift_amount >> 1ULL;
 			const_iterator to_return = const_iterator(m_data, m_skip_data + (m_high_water_mark >> 6U), static_cast<size_t>(m_high_water_mark), word);
 
@@ -1152,15 +1158,15 @@ namespace scw
 
 			m_page_count = static_cast<uint32_t>(reserve_size / implementation::OS_PAGE_SIZE);
 
-			m_data = static_cast<Node*>(VirtualAlloc(NULL, sm_reserved_bytes, MEM_RESERVE, PAGE_READWRITE));
-			m_skip_data = static_cast<uint64_t*>(VirtualAlloc(NULL, sm_skip_reserved_bytes, MEM_RESERVE, PAGE_READWRITE));
+			m_data = static_cast<Node*>(platform::reserve(sm_reserved_bytes));
+			m_skip_data = static_cast<uint64_t*>(platform::reserve(sm_skip_reserved_bytes));
 
 			if (!m_data || !m_skip_data) [[unlikely]]
 			{
 				allocate_fail_();
 			}
-			if (!VirtualAlloc(m_data, reserve_size, MEM_COMMIT, PAGE_READWRITE) ||
-				!VirtualAlloc(m_skip_data, skip_reserve_size, MEM_COMMIT, PAGE_READWRITE)) [[unlikely]]
+			if (!platform::commit(m_data, reserve_size) ||
+				!platform::commit(m_skip_data, skip_reserve_size)) [[unlikely]]
 			{
 				allocate_fail_();
 			}
@@ -1175,14 +1181,14 @@ namespace scw
 		{
 			if (m_data)
 			{
-				if (!VirtualFree(m_data, 0ULL, MEM_RELEASE)) [[unlikely]]
+				if (!platform::free(m_data)) [[unlikely]]
 				{
 					std::abort();
 				}
 			}
 			if (m_skip_data)
 			{
-				if (!VirtualFree(m_skip_data, 0ULL, MEM_RELEASE)) [[unlikely]]
+				if (!platform::free(m_skip_data)) [[unlikely]]
 				{
 					std::abort();
 				}
@@ -1283,7 +1289,7 @@ namespace scw
 
 			if (m_data)
 			{
-				if (!VirtualFree(m_data, 0ULL, MEM_RELEASE)) [[unlikely]]
+				if (!platform::free(m_data)) [[unlikely]]
 				{
 					std::abort();
 				}
@@ -1292,7 +1298,7 @@ namespace scw
 			}
 			if (m_skip_data)
 			{
-				if (!VirtualFree(m_skip_data, 0ULL, MEM_RELEASE)) [[unlikely]]
+				if (!platform::free(m_skip_data)) [[unlikely]]
 				{
 					std::abort();
 				}
@@ -1313,14 +1319,14 @@ namespace scw
 
 			if (bytes_to_commit)
 			{
-				if (!VirtualAlloc(reinterpret_cast<char*>(m_data) + old_bytes, bytes_to_commit, MEM_COMMIT, PAGE_READWRITE)) [[unlikely]]
+				if (!platform::commit(reinterpret_cast<char*>(m_data) + old_bytes, bytes_to_commit)) [[unlikely]]
 				{
 					throw std::bad_alloc();
 				}
 			}
 			if (skip_bytes_to_commit)
 			{
-				if (!VirtualAlloc(reinterpret_cast<char*>(m_skip_data) + old_skip_array_bytes, skip_bytes_to_commit, MEM_COMMIT, PAGE_READWRITE)) [[unlikely]]
+				if (!platform::commit(reinterpret_cast<char*>(m_skip_data) + old_skip_array_bytes, skip_bytes_to_commit)) [[unlikely]]
 				{
 					throw std::bad_alloc();
 				}
@@ -1471,14 +1477,14 @@ namespace scw
 
 			if (bytes_to_decommit)
 			{
-				if (!VirtualFree(reinterpret_cast<char*>(m_data) + bytes_used, bytes_to_decommit, MEM_DECOMMIT)) [[unlikely]]
+				if (!platform::decommit(reinterpret_cast<char*>(m_data) + bytes_used, bytes_to_decommit)) [[unlikely]]
 				{
 					std::abort();
 				}
 			}
 			if (skip_array_bytes_to_decommit)
 			{
-				if (!VirtualFree(reinterpret_cast<char*>(m_skip_data) + skip_array_bytes, skip_array_bytes_to_decommit, MEM_DECOMMIT)) [[unlikely]]
+				if (!platform::decommit(reinterpret_cast<char*>(m_skip_data) + skip_array_bytes, skip_array_bytes_to_decommit)) [[unlikely]]
 				{
 					std::abort();
 				}
@@ -1697,7 +1703,7 @@ namespace scw
 				++this->m_offset;
 			} while (!(this->m_skip_ptr[this->m_offset >> 6U] & 1ULL << static_cast<uint64_t>(this->m_offset & 63U))); [[likely]]
 
-			return *this;
+				return *this;
 		}
 
 
@@ -1906,3 +1912,47 @@ namespace scw
 		CompressedState m_state;
 	};
 }
+
+
+#ifdef SCW_MAP_PLATFORM
+#include <Windows.h>
+
+
+namespace scw
+{
+	namespace platform
+	{
+		size_t get_page_size() noexcept
+		{
+			SYSTEM_INFO system_info;
+			GetSystemInfo(&system_info);
+
+			return static_cast<size_t>(system_info.dwPageSize);
+		}
+
+
+		[[nodiscard]] void* reserve(size_t dwSize)
+		{
+			return VirtualAlloc(NULL, dwSize, MEM_RESERVE, PAGE_READWRITE);
+		}
+
+
+		[[nodiscard]] void* commit(void* lpAddress, size_t dwSize)
+		{
+			return VirtualAlloc(lpAddress, dwSize, MEM_COMMIT, PAGE_READWRITE);
+		}
+
+
+		[[nodiscard]] bool free(void* lpAddress)
+		{
+			return VirtualFree(lpAddress, 0ULL, MEM_RELEASE);
+		}
+
+
+		[[nodiscard]] bool decommit(void* lpAddress, size_t dwSize)
+		{
+			return VirtualFree(lpAddress, dwSize, MEM_DECOMMIT);
+		}
+	}
+}
+#endif
