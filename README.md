@@ -28,8 +28,9 @@ This slot map specifically provides:
 - C++20
 
 ## Usage
+Similar to the stb series of libraries, define the the SCW_MAP_PLATFORM macro in a single translation unit (.cpp file).
+This will give the container the syscalls it needs by including windows.h in that translation unit.
 ```cpp
-// Similar to the stb series of libraries, define the the SCW_MAP_PLATFORM macro to include the windows.h header in a single translation unit in the project, so that the container has the syscalls it needs.
 // bitset_map_platform.cpp
 #define SCW_MAP_PLATFORM
 #include "bitset_map.h"
