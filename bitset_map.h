@@ -515,7 +515,7 @@ namespace scw
 		}
 
 
-			void try_erase(handle p_handle) noexcept
+		void try_erase(handle p_handle) noexcept
 			requires c_generational
 		{
 			try_erase(p_handle.index, p_handle.generation);
@@ -529,7 +529,7 @@ namespace scw
 		}
 
 
-			void try_erase(T* p_element, uint32_t p_generation) noexcept
+		void try_erase(T* p_element, uint32_t p_generation) noexcept
 			requires c_generational
 		{
 			try_erase(index_of_(p_element), p_generation);
@@ -543,8 +543,8 @@ namespace scw
 		}
 
 
-			// HELPERS
-			[[nodiscard]] T& at(uint32_t p_index) noexcept
+		// HELPERS
+		[[nodiscard]] T& at(uint32_t p_index) noexcept
 		{
 			return m_data[p_index].value;
 		}
@@ -592,7 +592,7 @@ namespace scw
 		}
 
 
-			[[nodiscard]] const T* try_at(uint32_t p_index, uint32_t p_generation) const noexcept
+		[[nodiscard]] const T* try_at(uint32_t p_index, uint32_t p_generation) const noexcept
 			requires c_generational
 		{
 			if (is_generation(p_index, p_generation))
@@ -616,7 +616,7 @@ namespace scw
 		}
 
 
-			[[nodiscard]] T* try_at(handle p_handle) noexcept
+		[[nodiscard]] T* try_at(handle p_handle) noexcept
 			requires c_generational
 		{
 			return try_at(p_handle.index, p_handle.generation);
@@ -630,7 +630,7 @@ namespace scw
 		}
 
 
-			[[nodiscard]] const T* try_at(handle p_handle) const noexcept
+		[[nodiscard]] const T* try_at(handle p_handle) const noexcept
 			requires c_generational
 		{
 			return try_at(p_handle.index, p_handle.generation);
@@ -644,7 +644,7 @@ namespace scw
 		}
 
 
-			[[nodiscard]] T* try_at(T* p_element, uint32_t p_generation) noexcept
+		[[nodiscard]] T* try_at(T* p_element, uint32_t p_generation) noexcept
 			requires c_generational
 		{
 			if (is_generation(p_element, p_generation))
@@ -668,7 +668,7 @@ namespace scw
 		}
 
 
-			[[nodiscard]] const T* try_at(const T* p_element, uint32_t p_generation) const noexcept
+		[[nodiscard]] const T* try_at(const T* p_element, uint32_t p_generation) const noexcept
 			requires c_generational
 		{
 			if (is_generation(p_element, p_generation))
@@ -692,7 +692,7 @@ namespace scw
 		}
 
 
-			[[nodiscard]] bool is_alive(uint32_t p_index) const noexcept
+		[[nodiscard]] bool is_alive(uint32_t p_index) const noexcept
 		{
 			return get_bit_(p_index);
 		}
@@ -1493,13 +1493,13 @@ namespace scw
 		}
 
 
-		[[nodiscard]] constexpr static uint32_t index_of_(T* element) noexcept
+		[[nodiscard]] uint32_t index_of_(T* element) noexcept
 		{
 			return reinterpret_cast<Node*>(reinterpret_cast<char*>(element) - offsetof(Node, value)) - m_data;
 		}
 
 
-		[[nodiscard]] constexpr static const uint32_t index_of_(const T* element) noexcept
+		[[nodiscard]] const uint32_t index_of_(const T* element) noexcept
 		{
 			return reinterpret_cast<const Node*>(reinterpret_cast<const char*>(element) - offsetof(Node, value)) - m_data;
 		}
@@ -1584,7 +1584,8 @@ namespace scw
 			bitset_map_iterator_base() noexcept = default;
 
 			bitset_map_iterator_base(DataValueType p_data, SkipValueType p_skip_ptr, uint64_t p_offset) noexcept :
-				m_data(p_data), m_skip_ptr(p_skip_ptr), m_offset(p_offset) {}
+				m_data(p_data), m_skip_ptr(p_skip_ptr), m_offset(p_offset) {
+			}
 
 		public:
 			[[nodiscard]] ValueType& operator*() const noexcept
@@ -1625,7 +1626,8 @@ namespace scw
 
 	public:
 		bitset_map_iterator(Base::DataValueType p_data, Base::SkipValueType p_skip_ptr, uint64_t p_offset, uint64_t p_word) noexcept :
-			Base(p_data, p_skip_ptr, p_offset), m_word(p_word) {}
+			Base(p_data, p_skip_ptr, p_offset), m_word(p_word) {
+		}
 
 	public:
 		bitset_map_iterator& operator++() noexcept
