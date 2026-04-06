@@ -1,8 +1,8 @@
 # scw::bitset_map Slot Map
 A fast Slot Map
 
-## Caution!
-Header includes Windows.h, and hardware intrinsics until ported to other platforms
+## Attention
+Currently relies on VirtualAlloc and hardware intrinsics. Needs to be ported to linux
 
 ## Features
 A slot map is a data structure which features:
@@ -29,6 +29,13 @@ This slot map specifically provides:
 
 ## Usage
 ```cpp
+// Similar to the stb series of libraries, define the the SCW_MAP_PLATFORM macro to include the windows.h header in a single translation unit in the project, so that the container has the syscalls it needs.
+// bitset_map_platform.cpp
+#define SCW_MAP_PLATFORM
+#include "bitset_map.h"
+
+
+// main.cpp
 #include "bitset_map.h"
 
 constexpr static size_t MAX_ELEMENT_COUNT = 1'000'000;
