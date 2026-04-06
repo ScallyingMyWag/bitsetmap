@@ -382,12 +382,12 @@ namespace scw
 			{
 				const uint32_t rollback_high_water_mark = m_high_water_mark;
 
-				Node* const slot = get_allocation_slot_();
+				const uint32_t slot = get_allocation_slot_();
 
 				return construct_in_slot_(slot, rollback_high_water_mark, std::forward<Args>(p_args)...);
 			}
 
-			Node* const slot = get_allocation_slot_();
+			const uint32_t slot = get_allocation_slot_();
 
 			return construct_in_slot_(slot, std::forward<Args>(p_args)...);
 		}
@@ -412,12 +412,12 @@ namespace scw
 			{
 				const uint32_t rollback_high_water_mark = m_high_water_mark;
 
-				Node* const slot = get_end_allocation_slot_();
+				const uint32_t slot = get_end_allocation_slot_();
 
 				return construct_in_slot_(slot, rollback_high_water_mark, std::forward<Args>(p_args)...);
 			}
 
-			Node* const slot = get_end_allocation_slot_();
+			const uint32_t slot = get_end_allocation_slot_();
 
 			return construct_in_slot_(slot, std::forward<Args>(p_args)...);
 		}
@@ -442,12 +442,12 @@ namespace scw
 			{
 				const uint32_t rollback_high_water_mark = m_high_water_mark;
 
-				Node* const slot = get_unchecked_allocation_slot_();
+				const uint32_t slot = get_unchecked_allocation_slot_();
 
 				return construct_in_slot_(slot, rollback_high_water_mark, std::forward<Args>(p_args)...);
 			}
 
-			Node* const slot = get_unchecked_allocation_slot_();
+			const uint32_t slot = get_unchecked_allocation_slot_();
 
 			return construct_in_slot_(slot, std::forward<Args>(p_args)...);
 		}
@@ -479,7 +479,7 @@ namespace scw
 
 		void erase(T* p_element) noexcept
 		{
-			erase(static_cast<uint32_t>(node_of_(p_element) - m_data));
+			erase(index_of_(p_element));
 		}
 
 
@@ -532,14 +532,14 @@ namespace scw
 			void try_erase(T* p_element, uint32_t p_generation) noexcept
 			requires c_generational
 		{
-			try_erase(static_cast<uint32_t>(node_of_(p_element) - m_data), p_generation);
+			try_erase(index_of_(p_element), p_generation);
 		}
 
 
 		void try_erase(T* p_element) noexcept
 			requires !c_generational
 		{
-			try_erase(static_cast<uint32_t>(node_of_(p_element) - m_data));
+			try_erase(index_of_(p_element));
 		}
 
 
@@ -706,7 +706,7 @@ namespace scw
 
 		[[nodiscard]] bool is_alive(T* p_element) const noexcept
 		{
-			return is_alive(static_cast<uint32_t>(node_of_(p_element) - m_data));
+			return is_alive(index_of_(p_element));
 		}
 
 
@@ -727,7 +727,7 @@ namespace scw
 		[[nodiscard]] bool is_generation(T* p_element, uint32_t p_generation) const noexcept
 			requires c_generational
 		{
-			return node_of_(p_element)->generation == p_generation;
+			return reinterpret_cast<Node*>(reinterpret_cast<char*>(p_element) - offsetof(Node, value))->generation == p_generation;
 		}
 
 
@@ -762,14 +762,14 @@ namespace scw
 		[[nodiscard]] uint32_t& get_generation(T* p_element) noexcept
 			requires c_generational
 		{
-			return get_generation(static_cast<uint32_t>(node_of_(p_element) - m_data));
+			return get_generation(index_of_(p_element));
 		}
 
 
 		[[nodiscard]] const uint32_t& get_generation(const T* p_element) const noexcept
 			requires c_generational
 		{
-			return get_generation(static_cast<uint32_t>(node_of_(p_element) - m_data));
+			return get_generation(static_cast<uint32_t>(index_of_(p_element) - m_data));
 		}
 
 
@@ -1276,7 +1276,7 @@ namespace scw
 					{
 						if constexpr (t_enable_last_index)
 						{
-							if (static_cast<uint32_t>(node_of_(&element) - m_data) >= p_last_index)
+							if (index_of_(&element) >= p_last_index)
 							{
 								break;
 							}
@@ -1339,7 +1339,7 @@ namespace scw
 		}
 
 
-		[[nodiscard]] Node* get_allocation_slot_()
+		[[nodiscard]] uint32_t get_allocation_slot_()
 		{
 			if (m_free_list_index != UINT32_MAX)
 			{
@@ -1349,7 +1349,7 @@ namespace scw
 
 				toggle_bit_(return_index);
 
-				return m_data + return_index;
+				return return_index;
 			}
 			else if (m_data + m_high_water_mark + 1U == m_end_data)
 			{
@@ -1359,11 +1359,11 @@ namespace scw
 			++m_high_water_mark;
 			++m_size;
 
-			return m_data + m_high_water_mark - 1U;
+			return m_high_water_mark - 1U;
 		}
 
 
-		[[nodiscard]] Node* get_end_allocation_slot_()
+		[[nodiscard]] uint32_t get_end_allocation_slot_()
 		{
 			if (m_data + m_high_water_mark + 1U == m_end_data)
 			{
@@ -1373,55 +1373,53 @@ namespace scw
 			++m_high_water_mark;
 			++m_size;
 
-			return m_data + m_high_water_mark - 1U;
+			return m_high_water_mark - 1U;
 		}
 
 
-		[[nodiscard]] Node* get_unchecked_allocation_slot_() noexcept
+		[[nodiscard]] uint32_t get_unchecked_allocation_slot_() noexcept
 		{
 			++m_high_water_mark;
 			++m_size;
 
-			return m_data + m_high_water_mark - 1U;
+			return m_high_water_mark - 1U;
 		}
 
 
 		template<class... Args>
-		[[nodiscard]] handle construct_in_slot_(Node* p_slot, Args&&... p_args) noexcept
+		[[nodiscard]] handle construct_in_slot_(uint32_t p_slot, Args&&... p_args) noexcept
 			requires std::is_nothrow_constructible_v<T, Args...>
 		{
-			::new(&p_slot->value) T(std::forward<Args>(p_args)...);
+			::new(&m_data[p_slot].value) T(std::forward<Args>(p_args)...);
 
 			if constexpr (c_generational)
 			{
-				return { static_cast<uint32_t>(p_slot - m_data), p_slot->generation };
+				return { static_cast<uint32_t>(p_slot), m_data[p_slot].generation };
 			}
 			else
 			{
-				return { static_cast<uint32_t>(p_slot - m_data) };
+				return { static_cast<uint32_t>(p_slot) };
 			}
 		}
 
 
 		template<class... Args>
-		[[nodiscard]] handle construct_in_slot_(Node* p_slot, uint32_t p_high_water_mark, Args&&... p_args)
+		[[nodiscard]] handle construct_in_slot_(uint32_t p_slot, uint32_t p_high_water_mark, Args&&... p_args)
 		{
 			try
 			{
-				::new(&p_slot->value) T(std::forward<Args>(p_args)...);
+				::new(&m_data[p_slot].value) T(std::forward<Args>(p_args)...);
 			}
 			catch (...)
 			{
 				if (m_high_water_mark == p_high_water_mark)
 				{
-					const uint32_t index = static_cast<uint32_t>(p_slot - m_data);
-
-					m_data[index].free_list_index = m_free_list_index;
+					m_data[p_slot].free_list_index = m_free_list_index;
 
 					--m_size;
-					m_free_list_index = index;
+					m_free_list_index = p_slot;
 
-					toggle_bit_(static_cast<uint32_t>(index));
+					toggle_bit_(static_cast<uint32_t>(p_slot));
 				}
 				else
 				{
@@ -1434,11 +1432,11 @@ namespace scw
 
 			if constexpr (c_generational)
 			{
-				return { static_cast<uint32_t>(p_slot - m_data), p_slot->generation };
+				return { static_cast<uint32_t>(p_slot), m_data[p_slot].generation };
 			}
 			else
 			{
-				return { static_cast<uint32_t>(p_slot - m_data) };
+				return { static_cast<uint32_t>(p_slot) };
 			}
 		}
 
@@ -1495,15 +1493,15 @@ namespace scw
 		}
 
 
-		[[nodiscard]] constexpr static Node* node_of_(T* element) noexcept
+		[[nodiscard]] constexpr static uint32_t index_of_(T* element) noexcept
 		{
-			return reinterpret_cast<Node*>(reinterpret_cast<char*>(element) - offsetof(Node, value));
+			return reinterpret_cast<Node*>(reinterpret_cast<char*>(element) - offsetof(Node, value)) - m_data;
 		}
 
 
-		[[nodiscard]] constexpr static const Node* node_of_(const T* element) noexcept
+		[[nodiscard]] constexpr static const uint32_t index_of_(const T* element) noexcept
 		{
-			return reinterpret_cast<const Node*>(reinterpret_cast<const char*>(element) - offsetof(Node, value));
+			return reinterpret_cast<const Node*>(reinterpret_cast<const char*>(element) - offsetof(Node, value)) - m_data;
 		}
 
 
