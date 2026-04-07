@@ -898,6 +898,11 @@ namespace scw
 					{
 						if (!is_alive(current_index))
 						{
+							if constexpr (c_generational)
+							{
+								m_data[current_index].generation = m_data[last_index].generation;
+							}
+
 							::new(&m_data[current_index].value) T(std::move(m_data[last_index].value));
 
 							if constexpr (!std::is_trivially_destructible_v<T>)
