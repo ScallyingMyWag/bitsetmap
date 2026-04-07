@@ -769,7 +769,7 @@ namespace scw
 		[[nodiscard]] const uint32_t& get_generation(const T* p_element) const noexcept
 			requires c_generational
 		{
-			return get_generation(static_cast<uint32_t>(index_of_(p_element) - m_data));
+			return get_generation(index_of_(p_element));
 		}
 
 
@@ -777,7 +777,7 @@ namespace scw
 		[[nodiscard]] uint32_t& get_generation(const t_iterator& p_iterator) noexcept
 			requires c_generational
 		{
-			return p_iterator.m_data->generation;
+			return p_iterator.m_data[p_iterator.m_offset].generation;
 		}
 
 
@@ -785,7 +785,7 @@ namespace scw
 		[[nodiscard]] const uint32_t& get_generation(const t_iterator& p_iterator) const noexcept
 			requires c_generational
 		{
-			return p_iterator.m_data->generation;
+			return p_iterator.m_data[p_iterator.m_offset].generation;
 		}
 
 
@@ -1077,7 +1077,7 @@ namespace scw
 
 		[[nodiscard]] branched_iterator begin_branched() noexcept
 		{
-			branched_iterator to_return = branched_iterator(m_data, m_skip_data, 0ULL);
+			branched_iterator to_return = branched_iterator(m_data, m_skip_data, 0ULL, *m_skip_data);
 
 			return *m_skip_data & 1ULL ? to_return : ++to_return;
 		}
@@ -1085,7 +1085,7 @@ namespace scw
 
 		[[nodiscard]] branched_iterator end_branched() noexcept
 		{
-			return branched_iterator(m_data, nullptr, static_cast<size_t>(m_high_water_mark));
+			return branched_iterator(m_data, nullptr, static_cast<size_t>(m_high_water_mark), 0ULL);
 		}
 
 
@@ -1096,7 +1096,9 @@ namespace scw
 				return begin_branched();
 			}
 
-			branched_iterator to_return = branched_iterator(m_data, m_skip_data + (m_high_water_mark >> 6U), static_cast<size_t>(m_high_water_mark));
+			const uint64_t shift_amount = static_cast<uint64_t>(m_high_water_mark & 63U);
+			const uint64_t word = m_skip_data[m_high_water_mark >> 6U] << shift_amount;
+			branched_iterator to_return = branched_iterator(m_data, m_skip_data + (m_high_water_mark >> 6U), static_cast<size_t>(m_high_water_mark), word);
 
 			return --to_return;
 		}
@@ -1104,7 +1106,7 @@ namespace scw
 
 		[[nodiscard]] const_branched_iterator begin_branched() const noexcept
 		{
-			const_branched_iterator to_return = const_branched_iterator(m_data, m_skip_data, 0ULL);
+			const_branched_iterator to_return = const_branched_iterator(m_data, m_skip_data, 0ULL, *m_skip_data);
 
 			return *m_skip_data & 1ULL ? to_return : ++to_return;
 		}
@@ -1112,7 +1114,7 @@ namespace scw
 
 		[[nodiscard]] const_branched_iterator end_branched() const noexcept
 		{
-			return const_branched_iterator(m_data, nullptr, static_cast<size_t>(m_high_water_mark));
+			return const_branched_iterator(m_data, nullptr, static_cast<size_t>(m_high_water_mark), 0ULL);
 		}
 
 
@@ -1123,7 +1125,9 @@ namespace scw
 				return begin_branched();
 			}
 
-			const_branched_iterator to_return = const_branched_iterator(m_data, m_skip_data + (m_high_water_mark >> 6U), static_cast<size_t>(m_high_water_mark));
+			const uint64_t shift_amount = static_cast<uint64_t>(m_high_water_mark & 63U);
+			const uint64_t word = m_skip_data[m_high_water_mark >> 6U] << shift_amount;
+			const_branched_iterator to_return = const_branched_iterator(m_data, m_skip_data + (m_high_water_mark >> 6U), static_cast<size_t>(m_high_water_mark), word);
 
 			return --to_return;
 		}
@@ -1499,7 +1503,7 @@ namespace scw
 		}
 
 
-		[[nodiscard]] const uint32_t index_of_(const T* element) noexcept
+		[[nodiscard]] uint32_t index_of_(const T* element) const noexcept
 		{
 			return reinterpret_cast<const Node*>(reinterpret_cast<const char*>(element) - offsetof(Node, value)) - m_data;
 		}
@@ -1583,8 +1587,8 @@ namespace scw
 		public:
 			bitset_map_iterator_base() noexcept = default;
 
-			bitset_map_iterator_base(DataValueType p_data, SkipValueType p_skip_ptr, uint64_t p_offset) noexcept :
-				m_data(p_data), m_skip_ptr(p_skip_ptr), m_offset(p_offset) {
+			bitset_map_iterator_base(DataValueType p_data, SkipValueType p_skip_ptr, uint64_t p_offset, uint64_t p_word) noexcept :
+				m_data(p_data), m_skip_ptr(p_skip_ptr), m_offset(p_offset), m_word(p_word) {
 			}
 
 		public:
@@ -1611,6 +1615,7 @@ namespace scw
 			DataValueType m_data;
 			SkipValueType m_skip_ptr;
 			uint64_t m_offset;
+			uint64_t m_word;
 		};
 	}
 
@@ -1625,23 +1630,18 @@ namespace scw
 		using Base::Base;
 
 	public:
-		bitset_map_iterator(Base::DataValueType p_data, Base::SkipValueType p_skip_ptr, uint64_t p_offset, uint64_t p_word) noexcept :
-			Base(p_data, p_skip_ptr, p_offset), m_word(p_word) {
-		}
-
-	public:
 		bitset_map_iterator& operator++() noexcept
 		{
-			while (!m_word)
+			while (!this->m_word)
 			{
 				++this->m_skip_ptr;
-				m_word = *this->m_skip_ptr;
+				this->m_word = *this->m_skip_ptr;
 				this->m_offset += 64ULL;
 			}
 
-			const uint64_t zero_count = _tzcnt_u64(m_word);
+			const uint64_t zero_count = _tzcnt_u64(this->m_word);
 			this->m_offset = (this->m_offset & ~63ULL) + zero_count;
-			m_word = _blsr_u64(m_word);
+			this->m_word = _blsr_u64(this->m_word);
 
 			return *this;
 		}
@@ -1658,16 +1658,16 @@ namespace scw
 
 		bitset_map_iterator& operator--() noexcept
 		{
-			while (!m_word)
+			while (!this->m_word)
 			{
 				--this->m_skip_ptr;
-				m_word = *this->m_skip_ptr;
+				this->m_word = *this->m_skip_ptr;
 				this->m_offset -= 64ULL;
 			}
 
-			const uint64_t zero_count = _lzcnt_u64(m_word);
+			const uint64_t zero_count = _lzcnt_u64(this->m_word);
 			this->m_offset = (this->m_offset | 63ULL) - zero_count;
-			m_word &= ~(1ULL << (63ULL - zero_count));
+			this->m_word = _bzhi_u64(this->m_word, 63ULL - zero_count);
 
 			return *this;
 		}
@@ -1680,9 +1680,6 @@ namespace scw
 
 			return other;
 		}
-
-	private:
-		uint64_t m_word;
 	};
 
 
@@ -1700,10 +1697,19 @@ namespace scw
 		{
 			do
 			{
-				++this->m_offset;
-			} while (!(this->m_skip_ptr[this->m_offset >> 6U] & 1ULL << static_cast<uint64_t>(this->m_offset & 63U))); [[likely]]
+				if (this->m_offset & 63U)
+				{
+					++this->m_offset;
+					this->m_word >>= 1ULL;
+				}
+				else
+				{
+					++this->m_offset;
+					this->m_word = this->m_skip_ptr[this->m_offset >> 6U];
+				}
+			} while (!(this->m_word & 1ULL));
 
-				return *this;
+			return *this;
 		}
 
 
@@ -1718,10 +1724,19 @@ namespace scw
 
 		bitset_map_iterator& operator--() noexcept
 		{
-			do [[likely]]
+			do
 			{
-				--this->m_offset;
-			} while (!(this->m_skip_ptr[this->m_offset >> 6U] & 1ULL << static_cast<uint64_t>(this->m_offset & 63U)));
+				if (this->m_offset & 63U)
+				{
+					--this->m_offset;
+					this->m_word <<= 1ULL;
+				}
+				else
+				{
+					--this->m_offset;
+					this->m_word = this->m_skip_ptr[this->m_offset >> 6U];
+				}
+			} while (!(this->m_word & (1ULL << 63ULL)));
 
 			return *this;
 		}
