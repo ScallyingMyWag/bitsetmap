@@ -4,6 +4,7 @@
 #include <algorithm>
 #include <concepts>
 #include <cstdint>
+#include <cstring>
 #include <ranges>
 #include <bit>
 #include <new>
@@ -46,21 +47,14 @@ namespace scw
 
 	namespace platform
 	{
-		size_t get_page_size() noexcept;
-		[[nodiscard]] void* reserve(size_t dwSize);
-		[[nodiscard]] void* commit(void* lpAddress, size_t dwSize);
-		[[nodiscard]] bool free(void* lpAddress);
-		[[nodiscard]] bool decommit(void* lpAddress, size_t dwSize);
-	}
-
-
-	namespace implementation
-	{
-		template<class, uint32_t, use_generations_concept, const_iterator_concept, iterator_branch_concept>
-		class bitset_map_iterator_base;
-
-
 		inline size_t OS_PAGE_SIZE;
+
+
+		size_t get_page_size() noexcept;
+		[[nodiscard]] void* reserve(size_t) noexcept;
+		[[nodiscard]] bool commit(void*, size_t) noexcept;
+		[[nodiscard]] bool free(void*, size_t) noexcept;
+		[[nodiscard]] bool decommit(void*, size_t) noexcept;
 
 
 		[[nodiscard]] inline bool query_system_page_info() noexcept
@@ -75,12 +69,13 @@ namespace scw
 		{
 			[[maybe_unused]] static const bool _ = query_system_page_info();
 		}
+	}
 
 
-		[[nodiscard]] constexpr inline size_t align(size_t p_value, size_t p_alignment) noexcept
-		{
-			return (p_value + p_alignment - 1ULL) & ~(p_alignment - 1ULL);
-		}
+	namespace implementation
+	{
+		template<class, uint32_t, use_generations_concept, const_iterator_concept, iterator_branch_concept>
+		class bitset_map_iterator_base;
 	}
 
 
@@ -496,7 +491,7 @@ namespace scw
 
 
 		void try_erase(uint32_t p_index, uint32_t p_generation) noexcept
-			requires c_generational
+			requires (c_generational)
 		{
 			if (is_generation(p_index, p_generation)) // invariants guarantee liveness
 			{
@@ -506,7 +501,7 @@ namespace scw
 
 
 		void try_erase(uint32_t p_index) noexcept
-			requires !c_generational
+			requires (!c_generational)
 		{
 			if (is_alive(p_index))
 			{
@@ -516,28 +511,28 @@ namespace scw
 
 
 		void try_erase(handle p_handle) noexcept
-			requires c_generational
+			requires (c_generational)
 		{
 			try_erase(p_handle.index, p_handle.generation);
 		}
 
 
 		void try_erase(handle p_handle) noexcept
-			requires !c_generational
+			requires (!c_generational)
 		{
 			try_erase(p_handle.index);
 		}
 
 
 		void try_erase(T* p_element, uint32_t p_generation) noexcept
-			requires c_generational
+			requires (c_generational)
 		{
 			try_erase(index_of_(p_element), p_generation);
 		}
 
 
 		void try_erase(T* p_element) noexcept
-			requires !c_generational
+			requires (!c_generational)
 		{
 			try_erase(index_of_(p_element));
 		}
@@ -569,7 +564,7 @@ namespace scw
 
 
 		[[nodiscard]] T* try_at(uint32_t p_index, uint32_t p_generation) noexcept
-			requires c_generational
+			requires (c_generational)
 		{
 			if (is_generation(p_index, p_generation))
 			{
@@ -581,7 +576,7 @@ namespace scw
 
 
 		[[nodiscard]] T* try_at(uint32_t p_index) noexcept
-			requires !c_generational
+			requires (!c_generational)
 		{
 			if (is_alive(p_index))
 			{
@@ -593,7 +588,7 @@ namespace scw
 
 
 		[[nodiscard]] const T* try_at(uint32_t p_index, uint32_t p_generation) const noexcept
-			requires c_generational
+			requires (c_generational)
 		{
 			if (is_generation(p_index, p_generation))
 			{
@@ -605,7 +600,7 @@ namespace scw
 
 
 		[[nodiscard]] const T* try_at(uint32_t p_index) const noexcept
-			requires !c_generational
+			requires (!c_generational)
 		{
 			if (is_alive(p_index))
 			{
@@ -624,7 +619,7 @@ namespace scw
 
 
 		[[nodiscard]] T* try_at(handle p_handle) noexcept
-			requires !c_generational
+			requires (!c_generational)
 		{
 			return try_at(p_handle.index);
 		}
@@ -638,14 +633,14 @@ namespace scw
 
 
 		[[nodiscard]] const T* try_at(handle p_handle) const noexcept
-			requires !c_generational
+			requires (!c_generational)
 		{
 			return try_at(p_handle.index);
 		}
 
 
 		[[nodiscard]] T* try_at(T* p_element, uint32_t p_generation) noexcept
-			requires c_generational
+			requires (c_generational)
 		{
 			if (is_generation(p_element, p_generation))
 			{
@@ -657,7 +652,7 @@ namespace scw
 
 
 		[[nodiscard]] T* try_at(T* p_element) noexcept
-			requires !c_generational
+			requires (!c_generational)
 		{
 			if (is_alive(p_element))
 			{
@@ -669,7 +664,7 @@ namespace scw
 
 
 		[[nodiscard]] const T* try_at(const T* p_element, uint32_t p_generation) const noexcept
-			requires c_generational
+			requires (c_generational)
 		{
 			if (is_generation(p_element, p_generation))
 			{
@@ -681,7 +676,7 @@ namespace scw
 
 
 		[[nodiscard]] const T* try_at(const T* p_element) const noexcept
-			requires !c_generational
+			requires (!c_generational)
 		{
 			if (is_alive(p_element))
 			{
@@ -828,7 +823,7 @@ namespace scw
 
 		void reserve(uint32_t p_reserve_count)
 		{
-			const uint32_t new_page_count = implementation::align(static_cast<size_t>(p_reserve_count) * sizeof(Node), implementation::OS_PAGE_SIZE) / implementation::OS_PAGE_SIZE;
+			const uint32_t new_page_count = align(static_cast<size_t>(p_reserve_count) * sizeof(Node), platform::OS_PAGE_SIZE) / platform::OS_PAGE_SIZE;
 
 			if (new_page_count > m_page_count)
 			{
@@ -1163,9 +1158,9 @@ namespace scw
 			const uint32_t elements_to_reserve = std::clamp(p_reserve_count, 1U, t_VM_reserve_elements);
 
 			size_t reserve_size = get_allocation_bytes_for_element_count_(elements_to_reserve);
-			size_t skip_reserve_size = get_skip_bytes_for_page_count_(static_cast<uint32_t>(reserve_size / implementation::OS_PAGE_SIZE));
+			size_t skip_reserve_size = get_skip_bytes_for_page_count_(static_cast<uint32_t>(reserve_size / platform::OS_PAGE_SIZE));
 
-			m_page_count = static_cast<uint32_t>(reserve_size / implementation::OS_PAGE_SIZE);
+			m_page_count = static_cast<uint32_t>(reserve_size / platform::OS_PAGE_SIZE);
 
 			m_data = static_cast<Node*>(platform::reserve(sm_reserved_bytes));
 			m_skip_data = static_cast<uint64_t*>(platform::reserve(sm_skip_reserved_bytes));
@@ -1190,14 +1185,14 @@ namespace scw
 		{
 			if (m_data)
 			{
-				if (!platform::free(m_data)) [[unlikely]]
+				if (!platform::free(m_data, sm_reserved_bytes)) [[unlikely]]
 				{
 					std::abort();
 				}
 			}
 			if (m_skip_data)
 			{
-				if (!platform::free(m_skip_data)) [[unlikely]]
+				if (!platform::free(m_skip_data, sm_skip_reserved_bytes)) [[unlikely]]
 				{
 					std::abort();
 				}
@@ -1298,7 +1293,7 @@ namespace scw
 
 			if (m_data)
 			{
-				if (!platform::free(m_data)) [[unlikely]]
+				if (!platform::free(m_data, sm_reserved_bytes)) [[unlikely]]
 				{
 					std::abort();
 				}
@@ -1307,7 +1302,7 @@ namespace scw
 			}
 			if (m_skip_data)
 			{
-				if (!platform::free(m_skip_data)) [[unlikely]]
+				if (!platform::free(m_skip_data, sm_skip_reserved_bytes)) [[unlikely]]
 				{
 					std::abort();
 				}
@@ -1319,11 +1314,11 @@ namespace scw
 
 		void grow_(uint32_t p_pages_to_commit)
 		{
-			const size_t old_bytes = static_cast<size_t>(m_page_count) * implementation::OS_PAGE_SIZE;
+			const size_t old_bytes = static_cast<size_t>(m_page_count) * platform::OS_PAGE_SIZE;
 			const size_t old_skip_array_bytes = get_skip_bytes_for_page_count_(m_page_count);
-			const uint32_t max_committable_pages = static_cast<uint32_t>((sm_reserved_bytes - old_bytes) / implementation::OS_PAGE_SIZE);
+			const uint32_t max_committable_pages = static_cast<uint32_t>((sm_reserved_bytes - old_bytes) / platform::OS_PAGE_SIZE);
 			p_pages_to_commit = std::min(p_pages_to_commit, max_committable_pages);
-			const size_t bytes_to_commit = static_cast<size_t>(p_pages_to_commit) * implementation::OS_PAGE_SIZE;
+			const size_t bytes_to_commit = static_cast<size_t>(p_pages_to_commit) * platform::OS_PAGE_SIZE;
 			const size_t skip_bytes_to_commit = get_skip_bytes_for_page_count_(m_page_count + p_pages_to_commit) - old_skip_array_bytes;
 
 			if (bytes_to_commit)
@@ -1344,7 +1339,7 @@ namespace scw
 			memset(reinterpret_cast<char*>(m_skip_data) + old_skip_array_bytes, ~0, skip_bytes_to_commit);
 
 			m_page_count = m_page_count + p_pages_to_commit;
-			m_end_data = m_data + static_cast<size_t>(m_page_count) * implementation::OS_PAGE_SIZE / sizeof(Node);
+			m_end_data = m_data + static_cast<size_t>(m_page_count) * platform::OS_PAGE_SIZE / sizeof(Node);
 		}
 
 
@@ -1474,9 +1469,9 @@ namespace scw
 		void decommit_pages_(uint32_t p_index) noexcept
 		{
 			size_t bytes_used = (static_cast<size_t>(p_index) + 1ULL) * sizeof(Node);
-			bytes_used = implementation::align(bytes_used, implementation::OS_PAGE_SIZE);
-			const uint32_t pages_used = bytes_used / implementation::OS_PAGE_SIZE;
-			const size_t bytes_to_decommit = static_cast<size_t>(m_page_count - pages_used) * implementation::OS_PAGE_SIZE;
+			bytes_used = align(bytes_used, platform::OS_PAGE_SIZE);
+			const uint32_t pages_used = bytes_used / platform::OS_PAGE_SIZE;
+			const size_t bytes_to_decommit = static_cast<size_t>(m_page_count - pages_used) * platform::OS_PAGE_SIZE;
 
 			const size_t previous_skip_array_bytes = get_skip_bytes_for_page_count_(m_page_count);
 			const size_t skip_array_bytes = get_skip_bytes_for_page_count_(pages_used);
@@ -1528,27 +1523,33 @@ namespace scw
 
 		[[nodiscard]] constexpr static size_t get_allocation_bytes_for_element_count_(uint32_t p_count) noexcept
 		{
-			return implementation::align(static_cast<size_t>(p_count) * sizeof(Node), implementation::OS_PAGE_SIZE);
+			return align(static_cast<size_t>(p_count) * sizeof(Node), platform::OS_PAGE_SIZE);
 		}
 
 
 		[[nodiscard]] constexpr static size_t get_skip_bytes_for_page_count_(uint32_t p_page_count) noexcept
 		{
-			size_t skip_array_bytes = static_cast<size_t>(p_page_count) * implementation::OS_PAGE_SIZE / sizeof(Node) + 64ULL;
-			skip_array_bytes = implementation::align(skip_array_bytes, 64ULL) >> 3ULL;
+			size_t skip_array_bytes = static_cast<size_t>(p_page_count) * platform::OS_PAGE_SIZE / sizeof(Node) + 64ULL;
+			skip_array_bytes = align(skip_array_bytes, 64ULL) >> 3ULL;
 
-			return implementation::align(skip_array_bytes, implementation::OS_PAGE_SIZE);
+			return align(skip_array_bytes, platform::OS_PAGE_SIZE);
 		}
 
 
 		[[nodiscard]] static bool initialize_reserve_sizes_() noexcept
 		{
-			implementation::initialize_system_page_data();
+			platform::initialize_system_page_data();
 
 			sm_reserved_bytes = get_allocation_bytes_for_element_count_(static_cast<size_t>(t_VM_reserve_elements));
-			sm_skip_reserved_bytes = get_skip_bytes_for_page_count_(static_cast<uint32_t>(sm_reserved_bytes / implementation::OS_PAGE_SIZE));
+			sm_skip_reserved_bytes = get_skip_bytes_for_page_count_(static_cast<uint32_t>(sm_reserved_bytes / platform::OS_PAGE_SIZE));
 
 			return false;
+		}
+
+
+		[[nodiscard]] constexpr static size_t align(size_t p_value, size_t p_alignment) noexcept
+		{
+			return (p_value + p_alignment - 1ULL) & ~(p_alignment - 1ULL);
 		}
 
 	private: // MEMBERS
@@ -1581,7 +1582,7 @@ namespace scw
 
 
 			using ValueType = std::conditional_t<c_constant, const T, T>;
-			using DataValueType = std::conditional_t<c_constant, typename const bitset_map<T, t_elements, t_use_generations>::Node*, typename bitset_map<T, t_elements, t_use_generations>::Node*>;
+			using DataValueType = std::conditional_t<c_constant, const typename bitset_map<T, t_elements, t_use_generations>::Node*, typename bitset_map<T, t_elements, t_use_generations>::Node*>;
 			using SkipValueType = std::conditional_t<c_constant, const uint64_t*, uint64_t*>;
 
 		public:
@@ -1616,7 +1617,7 @@ namespace scw
 			bool operator>=(const bitset_map_iterator_base& other) const noexcept { return m_data + m_offset >= other.m_data + other.m_offset; }
 			bool operator<=(const bitset_map_iterator_base& other) const noexcept { return m_data + m_offset <= other.m_data + other.m_offset; }
 
-		protected:
+		public:
 			DataValueType m_data;
 			SkipValueType m_skip_ptr;
 			uint64_t m_offset;
@@ -1935,13 +1936,18 @@ namespace scw
 
 
 #ifdef SCW_MAP_PLATFORM
+#ifdef _WIN32
 #include <Windows.h>
+#else
+#include <sys/mman.h>
+#endif
 
 
 namespace scw
 {
 	namespace platform
 	{
+#ifdef _WIN32
 		size_t get_page_size() noexcept
 		{
 			SYSTEM_INFO system_info;
@@ -1951,28 +1957,61 @@ namespace scw
 		}
 
 
-		[[nodiscard]] void* reserve(size_t dwSize)
+		[[nodiscard]] void* reserve(size_t p_size) noexcept
 		{
-			return VirtualAlloc(NULL, dwSize, MEM_RESERVE, PAGE_READWRITE);
+			return VirtualAlloc(NULL, p_size, MEM_RESERVE, PAGE_READWRITE);
 		}
 
 
-		[[nodiscard]] void* commit(void* lpAddress, size_t dwSize)
+		[[nodiscard]] bool commit(void* p_address, size_t p_size) noexcept
 		{
-			return VirtualAlloc(lpAddress, dwSize, MEM_COMMIT, PAGE_READWRITE);
+			return VirtualAlloc(p_address, p_size, MEM_COMMIT, PAGE_READWRITE);
 		}
 
 
-		[[nodiscard]] bool free(void* lpAddress)
+		[[nodiscard]] bool free(void* p_address, size_t p_size) noexcept
 		{
-			return VirtualFree(lpAddress, 0ULL, MEM_RELEASE);
+			return VirtualFree(p_address, 0ULL, MEM_RELEASE);
 		}
 
 
-		[[nodiscard]] bool decommit(void* lpAddress, size_t dwSize)
+		[[nodiscard]] bool decommit(void* p_address, size_t p_size) noexcept
 		{
-			return VirtualFree(lpAddress, dwSize, MEM_DECOMMIT);
+			return VirtualFree(p_address, p_size, MEM_DECOMMIT);
 		}
+
+#else
+		size_t get_page_size() noexcept
+		{
+			return static_cast<size_t>(getpagesize());
+		}
+
+
+		[[nodiscard]] void* reserve(size_t p_size) noexcept
+		{
+            void* reserve_region = mmap(nullptr, p_size, PROT_READ | PROT_WRITE, MAP_PRIVATE | MAP_ANONYMOUS | MAP_NORESERVE, -1, 0);
+
+			return reserve_region == MAP_FAILED ? nullptr : reserve_region;
+		}
+
+
+		[[nodiscard]] bool commit(void* p_address, size_t p_size) noexcept
+		{
+            return !madvise(p_address, p_size, MADV_POPULATE_WRITE);
+		}
+
+
+		[[nodiscard]] bool free(void* p_address, size_t p_size) noexcept
+		{
+            return !munmap(p_address, p_size);
+		}
+
+
+		[[nodiscard]] bool decommit(void* p_address, size_t p_size) noexcept
+		{
+            return !madvise(p_address, p_size, MADV_DONTNEED);
+		}
+#endif
 	}
 }
 #endif
