@@ -1,9 +1,6 @@
 # scw::bitset_map Slot Map
 A fast Slot Map
 
-## Attention
-Currently relies on VirtualAlloc and hardware intrinsics. Needs to be ported to linux
-
 ## Features
 A slot map is a data structure which features:
 
@@ -16,6 +13,7 @@ This slot map specifically provides:
 
 - Fast allocation through virtual memory page commits, no reallocation
 - Fully contiguous virtual memory
+- Currently relies on VirtualAlloc on windows, and mmap on Linux.
 - Growable, up to reserved size
 - Fast reinsert through intrusive free list
 - Fast erase
