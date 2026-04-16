@@ -13,7 +13,7 @@ This slot map specifically provides:
 
 - Fast allocation through virtual memory page commits, no reallocation
 - Fully contiguous virtual memory
-- Currently relies on VirtualAlloc on windows, and mmap on Linux.
+- Relies on VirtualAlloc on windows, and mmap on Linux
 - Growable, up to reserved size
 - Fast reinsert through intrusive free list
 - Fast erase
