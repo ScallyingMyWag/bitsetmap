@@ -942,7 +942,7 @@ namespace scw
 
 			if (m_size)
 			{
-				index = clast().m_offset;;
+				index = clast().m_offset;
 
 				m_high_water_mark = index + 1U;
 
