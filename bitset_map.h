@@ -883,7 +883,7 @@ namespace scw
 
 						if (static_cast<float>(elements_to_move) / static_cast<float>(pow_2_elements_to_move) > 0.6f)
 						{
-							pow_2_elements_to_move *= 2U;
+							pow_2_elements_to_move *= 2ULL;
 						}
 
 						map.allocate(pow_2_elements_to_move);
