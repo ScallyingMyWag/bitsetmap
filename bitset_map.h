@@ -883,7 +883,7 @@ namespace scw
 
 						if (static_cast<float>(elements_to_move) / static_cast<float>(pow_2_elements_to_move) > 0.6f)
 						{
-							pow_2_elements_to_move *= 2;
+							pow_2_elements_to_move *= 2U;
 						}
 
 						map.allocate(pow_2_elements_to_move);
@@ -1594,8 +1594,7 @@ namespace scw
 			bitset_map_iterator_base() noexcept = default;
 
 			bitset_map_iterator_base(DataValueType p_data, SkipValueType p_skip_ptr, uint64_t p_offset, uint64_t p_word) noexcept :
-				m_data(p_data), m_skip_ptr(p_skip_ptr), m_offset(p_offset), m_word(p_word) {
-			}
+				m_data(p_data), m_skip_ptr(p_skip_ptr), m_offset(p_offset), m_word(p_word) {}
 
 		public:
 			[[nodiscard]] ValueType& operator*() const noexcept
@@ -1989,7 +1988,7 @@ namespace scw
 
 		[[nodiscard]] void* reserve(size_t p_size) noexcept
 		{
-            void* reserve_region = mmap(nullptr, p_size, PROT_READ | PROT_WRITE, MAP_PRIVATE | MAP_ANONYMOUS | MAP_NORESERVE, -1, 0);
+			void* reserve_region = mmap(nullptr, p_size, PROT_READ | PROT_WRITE, MAP_PRIVATE | MAP_ANONYMOUS | MAP_NORESERVE, -1, 0);
 
 			return reserve_region == MAP_FAILED ? nullptr : reserve_region;
 		}
@@ -1997,19 +1996,19 @@ namespace scw
 
 		[[nodiscard]] bool commit(void* p_address, size_t p_size) noexcept
 		{
-            return !madvise(p_address, p_size, MADV_POPULATE_WRITE);
+			return !madvise(p_address, p_size, MADV_POPULATE_WRITE);
 		}
 
 
 		[[nodiscard]] bool free(void* p_address, size_t p_size) noexcept
 		{
-            return !munmap(p_address, p_size);
+			return !munmap(p_address, p_size);
 		}
 
 
 		[[nodiscard]] bool decommit(void* p_address, size_t p_size) noexcept
 		{
-            return !madvise(p_address, p_size, MADV_DONTNEED);
+			return !madvise(p_address, p_size, MADV_DONTNEED);
 		}
 #endif
 	}
