@@ -1639,9 +1639,8 @@ namespace scw
 		{
 			while (!this->m_word)
 			{
-				++this->m_skip_ptr;
-				this->m_word = *this->m_skip_ptr;
 				this->m_offset += 64ULL;
+				this->m_word = this->m_skip_ptr[this->m_offset >> 6U];
 			}
 
 			const uint64_t zero_count = _tzcnt_u64(this->m_word);
@@ -1665,9 +1664,8 @@ namespace scw
 		{
 			while (!this->m_word)
 			{
-				--this->m_skip_ptr;
-				this->m_word = *this->m_skip_ptr;
 				this->m_offset -= 64ULL;
+				this->m_word = this->m_skip_ptr[this->m_offset >> 6U];
 			}
 
 			const uint64_t zero_count = _lzcnt_u64(this->m_word);
@@ -1702,15 +1700,21 @@ namespace scw
 		{
 			do
 			{
-				if (this->m_offset & 63U)
+				if (this->m_word)
 				{
 					++this->m_offset;
 					this->m_word >>= 1ULL;
 				}
 				else
 				{
-					++this->m_offset;
+					this->m_offset = (this->m_offset + 63ULL) & ~63ULL;
 					this->m_word = this->m_skip_ptr[this->m_offset >> 6U];
+
+					while (!this->m_word)
+					{
+						this->m_offset += 64ULL;
+						this->m_word = this->m_skip_ptr[this->m_offset >> 6U];
+					}
 				}
 			} while (!(this->m_word & 1ULL));
 
@@ -1731,15 +1735,21 @@ namespace scw
 		{
 			do
 			{
-				if (this->m_offset & 63U)
+				if (this->m_word)
 				{
 					--this->m_offset;
 					this->m_word <<= 1ULL;
 				}
 				else
 				{
-					--this->m_offset;
+					this->m_offset = (this->m_offset & ~63ULL) - 1ULL;
 					this->m_word = this->m_skip_ptr[this->m_offset >> 6U];
+
+					while (!this->m_word)
+					{
+						this->m_offset -= 64ULL;
+						this->m_word = this->m_skip_ptr[this->m_offset >> 6U];
+					}
 				}
 			} while (!(this->m_word & (1ULL << 63ULL)));
 
