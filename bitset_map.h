@@ -1640,7 +1640,7 @@ namespace scw
 			while (!this->m_word)
 			{
 				this->m_offset += 64ULL;
-				this->m_word = this->m_skip_ptr[this->m_offset >> 6U];
+				this->m_word = this->m_skip_ptr[this->m_offset >> 6ULL];
 			}
 
 			const uint64_t zero_count = _tzcnt_u64(this->m_word);
@@ -1665,7 +1665,7 @@ namespace scw
 			while (!this->m_word)
 			{
 				this->m_offset -= 64ULL;
-				this->m_word = this->m_skip_ptr[this->m_offset >> 6U];
+				this->m_word = this->m_skip_ptr[this->m_offset >> 6ULL];
 			}
 
 			const uint64_t zero_count = _lzcnt_u64(this->m_word);
@@ -1708,12 +1708,12 @@ namespace scw
 				else
 				{
 					this->m_offset = (this->m_offset + 63ULL) & ~63ULL;
-					this->m_word = this->m_skip_ptr[this->m_offset >> 6U];
+					this->m_word = this->m_skip_ptr[this->m_offset >> 6ULL];
 
 					while (!this->m_word)
 					{
 						this->m_offset += 64ULL;
-						this->m_word = this->m_skip_ptr[this->m_offset >> 6U];
+						this->m_word = this->m_skip_ptr[this->m_offset >> 6ULL];
 					}
 				}
 			} while (!(this->m_word & 1ULL));
@@ -1743,12 +1743,12 @@ namespace scw
 				else
 				{
 					this->m_offset = (this->m_offset & ~63ULL) - 1ULL;
-					this->m_word = this->m_skip_ptr[this->m_offset >> 6U];
+					this->m_word = this->m_skip_ptr[this->m_offset >> 6ULL];
 
 					while (!this->m_word)
 					{
 						this->m_offset -= 64ULL;
-						this->m_word = this->m_skip_ptr[this->m_offset >> 6U];
+						this->m_word = this->m_skip_ptr[this->m_offset >> 6ULL];
 					}
 				}
 			} while (!(this->m_word & (1ULL << 63ULL)));
@@ -1818,7 +1818,7 @@ namespace scw
 		remap_map(remap_map&& p_other) noexcept : m_state(std::move(p_other.m_state))
 		{
 			p_other.m_state.data = nullptr;
-			p_other.m_state.size = 0;
+			p_other.m_state.size = 0ULL;
 		}
 
 
@@ -1831,7 +1831,7 @@ namespace scw
 				m_state = std::move(p_other.m_state);
 
 				p_other.m_state.data = nullptr;
-				p_other.m_state.size = 0;
+				p_other.m_state.size = 0ULL;
 			}
 
 			return *this;
