@@ -853,18 +853,18 @@ namespace scw
 
 					for (uint32_t current_index = 0U; free_slots <= m_size - counted_elements; ++current_index)
 					{
-						if (current_index == last_index >> 6U)
-						{
-							const uint64_t shift_amount = static_cast<uint64_t>(~last_index & 63U);
-							const uint64_t pop_count = _mm_popcnt_u64(m_skip_data[current_index] & UINT64_MAX >> shift_amount);
-							counted_elements += pop_count;
-							free_slots += 64ULL - pop_count - shift_amount;
-						}
-						else
+						if (current_index != last_index >> 6U)
 						{
 							const uint64_t pop_count = _mm_popcnt_u64(m_skip_data[current_index]);
 							counted_elements += pop_count;
 							free_slots += 64ULL - pop_count;
+						}
+						else
+						{
+							const uint64_t shift_amount = _andn_u64(static_cast<uint64_t>(last_index), 63ULL);
+							const uint64_t pop_count = _mm_popcnt_u64(m_skip_data[current_index] & UINT64_MAX >> shift_amount);
+							counted_elements += pop_count;
+							free_slots += 64ULL - pop_count - shift_amount;
 						}
 					}
 
@@ -1020,7 +1020,7 @@ namespace scw
 				return begin();
 			}
 
-			const uint64_t shift_amount = static_cast<uint64_t>(~m_high_water_mark & 63U);
+			const uint64_t shift_amount = _andn_u64(static_cast<uint64_t>(m_high_water_mark), 63ULL);
 			const uint64_t word = m_skip_data[m_high_water_mark >> 6U] & UINT64_MAX >> shift_amount >> 1ULL;
 			iterator to_return = iterator(m_data, m_skip_data + (m_high_water_mark >> 6U), static_cast<size_t>(m_high_water_mark), word);
 
@@ -1049,7 +1049,7 @@ namespace scw
 				return begin();
 			}
 
-			const uint64_t shift_amount = static_cast<uint64_t>(~m_high_water_mark & 63U);
+			const uint64_t shift_amount = _andn_u64(static_cast<uint64_t>(m_high_water_mark), 63ULL);
 			const uint64_t word = m_skip_data[m_high_water_mark >> 6U] & UINT64_MAX >> shift_amount >> 1ULL;
 			const_iterator to_return = const_iterator(m_data, m_skip_data + (m_high_water_mark >> 6U), static_cast<size_t>(m_high_water_mark), word);
 
@@ -1594,7 +1594,8 @@ namespace scw
 			bitset_map_iterator_base() noexcept = default;
 
 			bitset_map_iterator_base(DataValueType p_data, SkipValueType p_skip_ptr, uint64_t p_offset, uint64_t p_word) noexcept :
-				m_data(p_data), m_skip_ptr(p_skip_ptr), m_offset(p_offset), m_word(p_word) {}
+				m_data(p_data), m_skip_ptr(p_skip_ptr), m_offset(p_offset), m_word(p_word) {
+			}
 
 		public:
 			[[nodiscard]] ValueType& operator*() const noexcept
