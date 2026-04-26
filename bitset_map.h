@@ -1540,7 +1540,7 @@ namespace scw
 		{
 			platform::initialize_system_page_data();
 
-			sm_reserved_bytes = get_allocation_bytes_for_element_count_(static_cast<size_t>(t_VM_reserve_elements));
+			sm_reserved_bytes = get_allocation_bytes_for_element_count_(t_VM_reserve_elements);
 			sm_skip_reserved_bytes = get_skip_bytes_for_page_count_(static_cast<uint32_t>(sm_reserved_bytes / platform::OS_PAGE_SIZE));
 
 			return false;
@@ -1594,8 +1594,7 @@ namespace scw
 			bitset_map_iterator_base() noexcept = default;
 
 			bitset_map_iterator_base(DataValueType p_data, SkipValueType p_skip_ptr, uint64_t p_offset, uint64_t p_word) noexcept :
-				m_data(p_data), m_skip_ptr(p_skip_ptr), m_offset(p_offset), m_word(p_word) {
-			}
+				m_data(p_data), m_skip_ptr(p_skip_ptr), m_offset(p_offset), m_word(p_word) {}
 
 		public:
 			[[nodiscard]] ValueType& operator*() const noexcept
