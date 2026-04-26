@@ -950,12 +950,12 @@ namespace scw
 
 				if constexpr (c_generational)
 				{
-					memset(m_data + index + 1U, 0, static_cast<size_t>(m_end_data - m_data - index - 1U) * sizeof(Node));
+					memset(m_data + index + 1ULL, 0, static_cast<size_t>(m_end_data - m_data - index - 1ULL) * sizeof(Node));
 				}
 
 				m_skip_data[m_high_water_mark >> 6U] |= UINT64_MAX << static_cast<uint64_t>(m_high_water_mark & 63U);
 				const size_t bytes_to_reset = get_skip_bytes_for_page_count_(m_page_count) - static_cast<size_t>((m_high_water_mark >> 6U) + 1U) * sizeof(uint64_t);
-				memset(m_skip_data + (m_high_water_mark >> 6U) + 1U, ~0, bytes_to_reset);
+				memset(m_skip_data + (m_high_water_mark >> 6U) + 1ULL, ~0, bytes_to_reset);
 
 				uint32_t new_free_list_index = UINT32_MAX;
 				for (uint32_t current_index = index - 1U; current_index != UINT32_MAX; --current_index)
