@@ -1540,7 +1540,7 @@ namespace scw
 		{
 			platform::initialize_system_page_data();
 
-			sm_reserved_bytes = get_allocation_bytes_for_element_count_(t_VM_reserve_elements));
+			sm_reserved_bytes = get_allocation_bytes_for_element_count_(t_VM_reserve_elements);
 			sm_skip_reserved_bytes = get_skip_bytes_for_page_count_(static_cast<uint32_t>(sm_reserved_bytes / platform::OS_PAGE_SIZE));
 
 			return false;
