@@ -1229,13 +1229,13 @@ namespace scw
 							m_data[current_index].generation = other.m_data[current_index].generation;
 						}
 
-						if (!is_alive(current_index))
+						if (is_alive(current_index))
 						{
-							::new(&m_data[current_index].free_list_index) uint32_t(other.m_data[current_index].free_list_index);
+							::new(&m_data[current_index].value) T(other.m_data[current_index].value);
 						}
 						else
 						{
-							::new(&m_data[current_index].value) T(other.m_data[current_index].value);
+							::new(&m_data[current_index].free_list_index) uint32_t(other.m_data[current_index].free_list_index);
 						}
 					}
 				}
@@ -1540,7 +1540,7 @@ namespace scw
 		{
 			platform::initialize_system_page_data();
 
-			sm_reserved_bytes = get_allocation_bytes_for_element_count_(t_VM_reserve_elements);
+			sm_reserved_bytes = get_allocation_bytes_for_element_count_(t_VM_reserve_elements));
 			sm_skip_reserved_bytes = get_skip_bytes_for_page_count_(static_cast<uint32_t>(sm_reserved_bytes / platform::OS_PAGE_SIZE));
 
 			return false;
