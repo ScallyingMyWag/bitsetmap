@@ -1355,7 +1355,7 @@ namespace scw
 
 				return return_index;
 			}
-			else if (m_data + m_high_water_mark + 1U == m_end_data)
+			else if (m_data + m_high_water_mark + 1ULL == m_end_data)
 			{
 				grow_(m_page_count);
 			}
@@ -1369,7 +1369,7 @@ namespace scw
 
 		[[nodiscard]] uint32_t get_end_allocation_slot_()
 		{
-			if (m_data + m_high_water_mark + 1U == m_end_data)
+			if (m_data + m_high_water_mark + 1ULL == m_end_data)
 			{
 				grow_(m_page_count);
 			}
