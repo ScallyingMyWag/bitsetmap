@@ -1,5 +1,6 @@
 #pragma once
 
+#include <initializer_list>
 #include <type_traits>
 #include <algorithm>
 #include <concepts>
@@ -86,6 +87,7 @@ namespace scw
 	{
 	private:
 		static_assert(std::is_nothrow_destructible_v<T>, "scw::bitset_map requires T to be nothrow destructible");
+		static_assert(t_VM_reserve_elements && t_VM_reserve_elements < UINT32_MAX, "scw::bitset_map requires reserve size to be between 1 and uint32_t max - 1");
 
 	private: // TYPES
 		struct IndividualisticNode
@@ -188,6 +190,7 @@ namespace scw
 
 		template <std::ranges::input_range t_range>
 		explicit bitset_map(t_range&& p_range)
+			requires (!std::derived_from<std::remove_cvref_t<t_range>, bitset_map>)
 		{
 			constexpr static bool c_nothrow_constructible = std::is_nothrow_constructible_v<T, std::ranges::range_reference_t<t_range>>;
 
@@ -256,7 +259,7 @@ namespace scw
 		}
 
 
-		template <class t_iterator>
+		template <std::input_iterator t_iterator>
 		bitset_map(t_iterator p_first, t_iterator p_last)
 		{
 			constexpr static bool c_nothrow_constructible = std::is_nothrow_constructible_v<T, std::iter_reference_t<t_iterator>>;
@@ -327,6 +330,9 @@ namespace scw
 		}
 
 
+		bitset_map(std::initializer_list<T> p_list) : bitset_map(p_list.begin(), p_list.end()) {}
+
+
 		bitset_map(const bitset_map& p_other)
 		{
 			copy_bitset_map_(p_other);
@@ -381,10 +387,12 @@ namespace scw
 
 				return construct_in_slot_(slot, rollback_high_water_mark, std::forward<Args>(p_args)...);
 			}
+			else
+			{
+				const uint32_t slot = get_allocation_slot_();
 
-			const uint32_t slot = get_allocation_slot_();
-
-			return construct_in_slot_(slot, std::forward<Args>(p_args)...);
+				return construct_in_slot_(slot, std::forward<Args>(p_args)...);
+			}
 		}
 
 
@@ -411,10 +419,12 @@ namespace scw
 
 				return construct_in_slot_(slot, rollback_high_water_mark, std::forward<Args>(p_args)...);
 			}
+			else
+			{
+				const uint32_t slot = get_end_allocation_slot_();
 
-			const uint32_t slot = get_end_allocation_slot_();
-
-			return construct_in_slot_(slot, std::forward<Args>(p_args)...);
+				return construct_in_slot_(slot, std::forward<Args>(p_args)...);
+			}
 		}
 
 
@@ -441,10 +451,12 @@ namespace scw
 
 				return construct_in_slot_(slot, rollback_high_water_mark, std::forward<Args>(p_args)...);
 			}
+			else
+			{
+				const uint32_t slot = get_unchecked_allocation_slot_();
 
-			const uint32_t slot = get_unchecked_allocation_slot_();
-
-			return construct_in_slot_(slot, std::forward<Args>(p_args)...);
+				return construct_in_slot_(slot, std::forward<Args>(p_args)...);
+			}
 		}
 
 
@@ -831,6 +843,7 @@ namespace scw
 			}
 		}
 
+
 		// Intended to break pointer stability
 		template<return_remap_map_concept t_return_map = return_map, class Allocator = std::allocator<uint32_t>>
 		std::conditional_t<std::same_as<t_return_map, return_map>, remap_map<Allocator>, no_map> compress()
@@ -889,9 +902,34 @@ namespace scw
 						map.allocate(pow_2_elements_to_move);
 					}
 
-					for (uint32_t current_index = 0U; current_index < last_index; ++current_index)
+					uint32_t current_index = 0U;
+					uint64_t current_word = ~m_skip_data[current_index >> 6U];
+					const uint64_t shift_amount = _andn_u64(static_cast<uint64_t>(last_index), 63ULL);
+					uint64_t last_word = m_skip_data[last_index >> 6U] & UINT64_MAX >> shift_amount;
+
+					while (current_index < last_index)
 					{
-						if (!is_alive(current_index))
+						while (!current_word && current_index < last_index)
+						{
+							current_index += 64ULL;
+							current_word = ~m_skip_data[current_index >> 6ULL];
+						}
+
+						uint64_t zero_count = _tzcnt_u64(current_word);
+						current_index = (current_index & ~63ULL) + zero_count;
+						current_word = _blsr_u64(current_word);
+
+						while (!last_word && current_index < last_index)
+						{
+							last_index -= 64ULL;
+							last_word = m_skip_data[last_index >> 6ULL];
+						}
+
+						zero_count = _lzcnt_u64(last_word);
+						last_index = (last_index | 63ULL) - zero_count;
+						last_word = _bzhi_u64(last_word, 63ULL - zero_count);
+
+						if (current_index < last_index)
 						{
 							if constexpr (c_generational)
 							{
@@ -909,8 +947,6 @@ namespace scw
 							{
 								map.insert(last_index, current_index);
 							}
-
-							while (!is_alive(--last_index) && last_index > current_index) {}
 						}
 					}
 				}
@@ -1022,7 +1058,7 @@ namespace scw
 
 			const uint64_t shift_amount = _andn_u64(static_cast<uint64_t>(m_high_water_mark), 63ULL);
 			const uint64_t word = m_skip_data[m_high_water_mark >> 6U] & UINT64_MAX >> shift_amount >> 1ULL;
-			iterator to_return = iterator(m_data, m_skip_data + (m_high_water_mark >> 6U), static_cast<size_t>(m_high_water_mark), word);
+			iterator to_return = iterator(m_data, m_skip_data, static_cast<size_t>(m_high_water_mark), word);
 
 			return --to_return;
 		}
@@ -1051,7 +1087,7 @@ namespace scw
 
 			const uint64_t shift_amount = _andn_u64(static_cast<uint64_t>(m_high_water_mark), 63ULL);
 			const uint64_t word = m_skip_data[m_high_water_mark >> 6U] & UINT64_MAX >> shift_amount >> 1ULL;
-			const_iterator to_return = const_iterator(m_data, m_skip_data + (m_high_water_mark >> 6U), static_cast<size_t>(m_high_water_mark), word);
+			const_iterator to_return = const_iterator(m_data, m_skip_data, static_cast<size_t>(m_high_water_mark), word);
 
 			return --to_return;
 		}
@@ -1609,12 +1645,12 @@ namespace scw
 			}
 
 
-			bool operator==(const bitset_map_iterator_base& other) const noexcept { return m_data + m_offset == other.m_data + other.m_offset; }
-			bool operator!=(const bitset_map_iterator_base& other) const noexcept { return m_data + m_offset != other.m_data + other.m_offset; }
-			bool operator>(const bitset_map_iterator_base& other) const noexcept { return m_data + m_offset > other.m_data + other.m_offset; }
-			bool operator<(const bitset_map_iterator_base& other) const noexcept { return m_data + m_offset < other.m_data + other.m_offset; }
-			bool operator>=(const bitset_map_iterator_base& other) const noexcept { return m_data + m_offset >= other.m_data + other.m_offset; }
-			bool operator<=(const bitset_map_iterator_base& other) const noexcept { return m_data + m_offset <= other.m_data + other.m_offset; }
+			bool operator==(const bitset_map_iterator_base& other) const noexcept { return m_offset == other.m_offset; }
+			bool operator!=(const bitset_map_iterator_base& other) const noexcept { return m_offset != other.m_offset; }
+			bool operator>(const bitset_map_iterator_base& other) const noexcept { return m_offset > other.m_offset; }
+			bool operator<(const bitset_map_iterator_base& other) const noexcept { return m_offset < other.m_offset; }
+			bool operator>=(const bitset_map_iterator_base& other) const noexcept { return m_offset >= other.m_offset; }
+			bool operator<=(const bitset_map_iterator_base& other) const noexcept { return m_offset <= other.m_offset; }
 
 		public:
 			DataValueType m_data;
