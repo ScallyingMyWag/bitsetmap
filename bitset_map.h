@@ -994,14 +994,33 @@ namespace scw
 				memset(m_skip_data + (m_high_water_mark >> 6U) + 1ULL, ~0, bytes_to_reset);
 
 				uint32_t new_free_list_index = UINT32_MAX;
-				for (uint32_t current_index = index - 1U; current_index != UINT32_MAX; --current_index)
+				uint32_t current_index = index;
+				const uint64_t shift_amount = _andn_u64(static_cast<uint64_t>(current_index), 63ULL);
+				uint64_t word = ~m_skip_data[current_index >> 6U] & UINT64_MAX >> shift_amount;
+
+				while (true)
 				{
-					if (!is_alive(current_index))
+					while (!word)
 					{
-						m_data[current_index].free_list_index = new_free_list_index;
-						new_free_list_index = current_index;
+						current_index = (current_index & ~63ULL) - 1ULL;
+
+						if (current_index == UINT32_MAX)
+						{
+							goto LOOP_EXIT;
+						}
+
+						word = ~m_skip_data[current_index >> 6ULL];
 					}
+
+					const uint64_t zero_count = _lzcnt_u64(word);
+					current_index = (current_index | 63ULL) - zero_count;
+					word = _bzhi_u64(word, 63ULL - zero_count);
+
+					m_data[current_index].free_list_index = new_free_list_index;
+					new_free_list_index = current_index;
 				}
+
+				LOOP_EXIT:
 
 				m_free_list_index = new_free_list_index;
 
