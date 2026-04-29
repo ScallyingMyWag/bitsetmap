@@ -20,8 +20,6 @@ namespace scw
 	struct no_generations {};
 	struct is_const {};
 	struct not_const {};
-	struct bitscan {};
-	struct branched {};
 	struct return_map {};
 	struct no_map {};
 
@@ -33,13 +31,10 @@ namespace scw
 	concept use_generations_concept = std::same_as<T, use_generations> || std::same_as<T, no_generations>;
 
 	template<class T>
-	concept iterator_branch_concept = std::same_as<T, bitscan> || std::same_as<T, branched>;
-
-	template<class T>
 	concept return_remap_map_concept = std::same_as<T, return_map> || std::same_as<T, no_map>;
 
 
-	template<class, uint32_t, use_generations_concept, const_iterator_concept, iterator_branch_concept>
+	template<class, uint32_t, use_generations_concept, const_iterator_concept>
 	class bitset_map_iterator;
 
 	template<class>
@@ -70,13 +65,6 @@ namespace scw
 		{
 			[[maybe_unused]] static const bool _ = query_system_page_info();
 		}
-	}
-
-
-	namespace implementation
-	{
-		template<class, uint32_t, use_generations_concept, const_iterator_concept, iterator_branch_concept>
-		class bitset_map_iterator_base;
 	}
 
 
@@ -125,8 +113,8 @@ namespace scw
 		};
 
 	private: // MEMBER ALIASES
-		template<class, uint32_t, use_generations_concept, const_iterator_concept, iterator_branch_concept>
-		friend class implementation::bitset_map_iterator_base;
+		template<class, uint32_t, use_generations_concept, const_iterator_concept>
+		friend class bitset_map_iterator;
 
 
 		constexpr inline static bool c_generational = std::same_as<t_use_generations, use_generations>;
@@ -136,10 +124,8 @@ namespace scw
 
 	public:
 		using handle = std::conditional_t<c_generational, GenerationalHandle, IndividualisticHandle>;
-		using iterator = bitset_map_iterator<T, t_VM_reserve_elements, t_use_generations, not_const, bitscan>;
-		using const_iterator = bitset_map_iterator<T, t_VM_reserve_elements, t_use_generations, is_const, bitscan>;
-		using branched_iterator = bitset_map_iterator<T, t_VM_reserve_elements, t_use_generations, not_const, branched>;
-		using const_branched_iterator = bitset_map_iterator<T, t_VM_reserve_elements, t_use_generations, is_const, branched>;
+		using iterator = bitset_map_iterator<T, t_VM_reserve_elements, t_use_generations, not_const>;
+		using const_iterator = bitset_map_iterator<T, t_VM_reserve_elements, t_use_generations, is_const>;
 
 	public: // CONSTRUCTORS
 		bitset_map()
@@ -162,9 +148,12 @@ namespace scw
 
 			if constexpr (c_nothrow_constructible)
 			{
+				m_high_water_mark = p_element_count;
+				m_size = p_element_count;
+
 				for (uint32_t index = 0U; index < p_element_count; ++index)
 				{
-					emplace_back_unchecked(p_value);
+					::new(&m_data[index].value) T(p_value);
 				}
 			}
 			else
@@ -496,7 +485,7 @@ namespace scw
 			t_iterator next_element = p_iterator;
 			++next_element;
 
-			destroy_element_(static_cast<uint32_t>(p_iterator.m_offset));
+			destroy_element_(static_cast<uint32_t>(p_iterator.m_skip_offset + p_iterator.m_offset));
 
 			return next_element;
 		}
@@ -784,7 +773,7 @@ namespace scw
 		[[nodiscard]] uint32_t& get_generation(const t_iterator& p_iterator) noexcept
 			requires c_generational
 		{
-			return p_iterator.m_data[p_iterator.m_offset].generation;
+			return p_iterator.m_data[p_iterator.m_skip_offset + p_iterator.m_offset].generation;
 		}
 
 
@@ -792,7 +781,7 @@ namespace scw
 		[[nodiscard]] const uint32_t& get_generation(const t_iterator& p_iterator) const noexcept
 			requires c_generational
 		{
-			return p_iterator.m_data[p_iterator.m_offset].generation;
+			return p_iterator.m_data[p_iterator.m_skip_offset + p_iterator.m_offset].generation;
 		}
 
 
@@ -856,7 +845,8 @@ namespace scw
 
 			if (m_size)
 			{
-				last_index = clast().m_offset;
+				const iterator last_iterator = clast();
+				last_index = last_iterator.m_skip_offset + last_iterator.m_offset;
 				uint32_t elements_to_move = 0U;
 
 				if constexpr (c_return_map)
@@ -911,23 +901,23 @@ namespace scw
 					{
 						while (!current_word && current_index < last_index)
 						{
-							current_index += 64ULL;
-							current_word = ~m_skip_data[current_index >> 6ULL];
+							current_index += 64U;
+							current_word = ~m_skip_data[current_index >> 6U];
 						}
 
 						uint64_t zero_count = _tzcnt_u64(current_word);
-						current_index = (current_index & ~63ULL) + zero_count;
+						current_index = (current_index & ~63U) + zero_count;
 						current_word = _blsr_u64(current_word);
 
 						while (!last_word && current_index < last_index)
 						{
-							last_index -= 64ULL;
-							last_word = m_skip_data[last_index >> 6ULL];
+							last_index -= 64U;
+							last_word = m_skip_data[last_index >> 6U];
 						}
 
 						zero_count = _lzcnt_u64(last_word);
-						last_index = (last_index | 63ULL) - zero_count;
-						last_word = _bzhi_u64(last_word, 63ULL - zero_count);
+						last_index = (last_index | 63U) - zero_count;
+						last_word = _bzhi_u64(last_word, static_cast<uint32_t>(63ULL - zero_count));
 
 						if (current_index < last_index)
 						{
@@ -978,7 +968,8 @@ namespace scw
 
 			if (m_size)
 			{
-				index = clast().m_offset;
+				const iterator last_iterator = clast();
+				index = last_iterator.m_skip_offset + last_iterator.m_offset;
 
 				m_high_water_mark = index + 1U;
 
@@ -1002,19 +993,19 @@ namespace scw
 				{
 					while (!word)
 					{
-						current_index = (current_index & ~63ULL) - 1ULL;
+						current_index = (current_index & ~63U) - 1U;
 
 						if (current_index == UINT32_MAX)
 						{
 							goto LOOP_EXIT;
 						}
 
-						word = ~m_skip_data[current_index >> 6ULL];
+						word = ~m_skip_data[current_index >> 6U];
 					}
 
 					const uint64_t zero_count = _lzcnt_u64(word);
-					current_index = (current_index | 63ULL) - zero_count;
-					word = _bzhi_u64(word, 63ULL - zero_count);
+					current_index = (current_index | 63U) - zero_count;
+					word = _bzhi_u64(word, 63U - zero_count);
 
 					m_data[current_index].free_list_index = new_free_list_index;
 					new_free_list_index = current_index;
@@ -1056,7 +1047,7 @@ namespace scw
 		// ITERATORS
 		[[nodiscard]] iterator begin() noexcept
 		{
-			iterator to_return = iterator(m_data, m_skip_data, 0ULL, *m_skip_data & UINT64_MAX << 1ULL);
+			iterator to_return(m_data, m_skip_data, *m_skip_data & UINT64_MAX << 1ULL, 0U, 0U);
 
 			return *m_skip_data & 1ULL ? to_return : ++to_return;
 		}
@@ -1064,7 +1055,7 @@ namespace scw
 
 		[[nodiscard]] iterator end() noexcept
 		{
-			return iterator(m_data, nullptr, static_cast<size_t>(m_high_water_mark), 0ULL);
+			return iterator(m_data + (m_high_water_mark & ~63U), m_skip_data, 0ULL, m_high_water_mark & ~63U, m_high_water_mark & 63U);
 		}
 
 
@@ -1077,7 +1068,7 @@ namespace scw
 
 			const uint64_t shift_amount = _andn_u64(static_cast<uint64_t>(m_high_water_mark), 63ULL);
 			const uint64_t word = m_skip_data[m_high_water_mark >> 6U] & UINT64_MAX >> shift_amount >> 1ULL;
-			iterator to_return = iterator(m_data, m_skip_data, static_cast<size_t>(m_high_water_mark), word);
+			iterator to_return(m_data + (m_high_water_mark & ~63U), m_skip_data, word, m_high_water_mark & ~63U, m_high_water_mark & 63U);
 
 			return --to_return;
 		}
@@ -1085,7 +1076,7 @@ namespace scw
 
 		[[nodiscard]] const_iterator begin() const noexcept
 		{
-			const_iterator to_return = const_iterator(m_data, m_skip_data, 0ULL, *m_skip_data & UINT64_MAX << 1ULL);
+			const_iterator to_return(m_data, m_skip_data, *m_skip_data & UINT64_MAX << 1ULL, 0U, 0U);
 
 			return *m_skip_data & 1ULL ? to_return : ++to_return;
 		}
@@ -1093,7 +1084,7 @@ namespace scw
 
 		[[nodiscard]] const_iterator end() const noexcept
 		{
-			return const_iterator(m_data, nullptr, static_cast<size_t>(m_high_water_mark), 0ULL);
+			return const_iterator(m_data + (m_high_water_mark & ~63U), m_skip_data, 0ULL, m_high_water_mark & ~63U, m_high_water_mark & 63U);
 		}
 
 
@@ -1106,7 +1097,7 @@ namespace scw
 
 			const uint64_t shift_amount = _andn_u64(static_cast<uint64_t>(m_high_water_mark), 63ULL);
 			const uint64_t word = m_skip_data[m_high_water_mark >> 6U] & UINT64_MAX >> shift_amount >> 1ULL;
-			const_iterator to_return = const_iterator(m_data, m_skip_data, static_cast<size_t>(m_high_water_mark), word);
+			const_iterator to_return(m_data + (m_high_water_mark & ~63U), m_skip_data, word, m_high_water_mark & ~63U, m_high_water_mark & 63U);
 
 			return --to_return;
 		}
@@ -1127,82 +1118,6 @@ namespace scw
 		[[nodiscard]] const_iterator clast() const noexcept
 		{
 			return last();
-		}
-
-
-		[[nodiscard]] branched_iterator begin_branched() noexcept
-		{
-			branched_iterator to_return = branched_iterator(m_data, m_skip_data, 0ULL, *m_skip_data);
-
-			return *m_skip_data & 1ULL ? to_return : ++to_return;
-		}
-
-
-		[[nodiscard]] branched_iterator end_branched() noexcept
-		{
-			return branched_iterator(m_data, nullptr, static_cast<size_t>(m_high_water_mark), 0ULL);
-		}
-
-
-		[[nodiscard]] branched_iterator last_branched() noexcept
-		{
-			if (!m_size)
-			{
-				return begin_branched();
-			}
-
-			const uint64_t shift_amount = static_cast<uint64_t>(m_high_water_mark & 63U);
-			const uint64_t word = m_skip_data[m_high_water_mark >> 6U] << shift_amount;
-			branched_iterator to_return = branched_iterator(m_data, m_skip_data + (m_high_water_mark >> 6U), static_cast<size_t>(m_high_water_mark), word);
-
-			return --to_return;
-		}
-
-
-		[[nodiscard]] const_branched_iterator begin_branched() const noexcept
-		{
-			const_branched_iterator to_return = const_branched_iterator(m_data, m_skip_data, 0ULL, *m_skip_data);
-
-			return *m_skip_data & 1ULL ? to_return : ++to_return;
-		}
-
-
-		[[nodiscard]] const_branched_iterator end_branched() const noexcept
-		{
-			return const_branched_iterator(m_data, nullptr, static_cast<size_t>(m_high_water_mark), 0ULL);
-		}
-
-
-		[[nodiscard]] const_branched_iterator last_branched() const noexcept
-		{
-			if (!m_size)
-			{
-				return begin_branched();
-			}
-
-			const uint64_t shift_amount = static_cast<uint64_t>(m_high_water_mark & 63U);
-			const uint64_t word = m_skip_data[m_high_water_mark >> 6U] << shift_amount;
-			const_branched_iterator to_return = const_branched_iterator(m_data, m_skip_data + (m_high_water_mark >> 6U), static_cast<size_t>(m_high_water_mark), word);
-
-			return --to_return;
-		}
-
-
-		[[nodiscard]] const_branched_iterator cbegin_branched() const noexcept
-		{
-			return begin_branched();
-		}
-
-
-		[[nodiscard]] const_branched_iterator cend_branched() const noexcept
-		{
-			return end_branched();
-		}
-
-
-		[[nodiscard]] const_branched_iterator clast_branched() const noexcept
-		{
-			return last_branched();
 		}
 
 	private: // IMPLEMENTATION
@@ -1623,84 +1538,44 @@ namespace scw
 
 
 	// ITERATOR
-	namespace implementation
-	{
-		template<class T, uint32_t t_elements, use_generations_concept t_use_generations, const_iterator_concept t_is_const, iterator_branch_concept>
-		class bitset_map_iterator_base
-		{
-		protected:
-			template<class, uint32_t, use_generations_concept>
-			friend class bitset_map;
-
-
-			constexpr static bool c_constant = std::same_as<t_is_const, is_const>;
-
-
-			using ValueType = std::conditional_t<c_constant, const T, T>;
-			using DataValueType = std::conditional_t<c_constant, const typename bitset_map<T, t_elements, t_use_generations>::Node*, typename bitset_map<T, t_elements, t_use_generations>::Node*>;
-			using SkipValueType = std::conditional_t<c_constant, const uint64_t*, uint64_t*>;
-
-		public:
-			using value_type = T;
-			using difference_type = std::ptrdiff_t;
-			using iterator_category = std::bidirectional_iterator_tag;
-
-		public:
-			bitset_map_iterator_base() noexcept = default;
-
-			bitset_map_iterator_base(DataValueType p_data, SkipValueType p_skip_ptr, uint64_t p_offset, uint64_t p_word) noexcept :
-				m_data(p_data), m_skip_ptr(p_skip_ptr), m_offset(p_offset), m_word(p_word) {}
-
-		public:
-			[[nodiscard]] ValueType& operator*() const noexcept
-			{
-				return m_data[m_offset].value;
-			}
-
-
-			[[nodiscard]] ValueType* operator->() const noexcept
-			{
-				return reinterpret_cast<ValueType*>(&m_data[m_offset].value);
-			}
-
-
-			bool operator==(const bitset_map_iterator_base& other) const noexcept { return m_offset == other.m_offset; }
-			bool operator!=(const bitset_map_iterator_base& other) const noexcept { return m_offset != other.m_offset; }
-			bool operator>(const bitset_map_iterator_base& other) const noexcept { return m_offset > other.m_offset; }
-			bool operator<(const bitset_map_iterator_base& other) const noexcept { return m_offset < other.m_offset; }
-			bool operator>=(const bitset_map_iterator_base& other) const noexcept { return m_offset >= other.m_offset; }
-			bool operator<=(const bitset_map_iterator_base& other) const noexcept { return m_offset <= other.m_offset; }
-
-		public:
-			DataValueType m_data;
-			SkipValueType m_skip_ptr;
-			uint64_t m_offset;
-			uint64_t m_word;
-		};
-	}
-
-
 	template<class T, uint32_t t_elements, use_generations_concept t_use_generations, const_iterator_concept t_is_const>
-	class bitset_map_iterator<T, t_elements, t_use_generations, t_is_const, bitscan> : public implementation::bitset_map_iterator_base<T, t_elements, t_use_generations, t_is_const, bitscan>
+	class bitset_map_iterator
 	{
 	private:
-		using Base = implementation::bitset_map_iterator_base<T, t_elements, t_use_generations, t_is_const, bitscan>;
+		template<class, uint32_t, use_generations_concept>
+		friend class bitset_map;
+
+
+		constexpr static bool c_constant = std::same_as<t_is_const, is_const>;
+
+
+		using ValueType = std::conditional_t<c_constant, const T, T>;
+		using DataValueType = std::conditional_t<c_constant, const typename bitset_map<T, t_elements, t_use_generations>::Node*, typename bitset_map<T, t_elements, t_use_generations>::Node*>;
+		using SkipValueType = std::conditional_t<c_constant, const uint64_t*, uint64_t*>;
 
 	public:
-		using Base::Base;
+		using value_type = T;
+		using difference_type = std::ptrdiff_t;
+		using iterator_category = std::bidirectional_iterator_tag;
+
+	public:
+		bitset_map_iterator() noexcept = default;
+
+		bitset_map_iterator(DataValueType p_data, SkipValueType p_skip_ptr_base, uint64_t p_word, uint32_t p_skip_offset, uint32_t p_offset) noexcept :
+			m_data(p_data), m_skip_ptr_base(p_skip_ptr_base), m_word(p_word), m_skip_offset(p_skip_offset), m_offset(p_offset) {}
 
 	public:
 		bitset_map_iterator& operator++() noexcept
 		{
-			while (!this->m_word)
+			while (!m_word) [[unlikely]]
 			{
-				this->m_offset += 64ULL;
-				this->m_word = this->m_skip_ptr[this->m_offset >> 6ULL];
+				m_data += 64ULL;
+				m_skip_offset += 64U;
+				m_word = m_skip_ptr_base[m_skip_offset >> 6U];
 			}
 
-			const uint64_t zero_count = _tzcnt_u64(this->m_word);
-			this->m_offset = (this->m_offset & ~63ULL) + zero_count;
-			this->m_word = _blsr_u64(this->m_word);
+			m_offset = static_cast<uint32_t>(_tzcnt_u64(m_word));
+			m_word = _blsr_u64(m_word);
 
 			return *this;
 		}
@@ -1717,15 +1592,15 @@ namespace scw
 
 		bitset_map_iterator& operator--() noexcept
 		{
-			while (!this->m_word)
+			while (!m_word)
 			{
-				this->m_offset -= 64ULL;
-				this->m_word = this->m_skip_ptr[this->m_offset >> 6ULL];
+				m_data -= 64ULL;
+				m_offset -= 64ULL;
+				m_word = m_skip_ptr_base[m_skip_offset >> 6U];
 			}
 
-			const uint64_t zero_count = _lzcnt_u64(this->m_word);
-			this->m_offset = (this->m_offset | 63ULL) - zero_count;
-			this->m_word = _bzhi_u64(this->m_word, 63ULL - zero_count);
+			m_offset = static_cast<uint32_t>(_lzcnt_u64(m_word));
+			m_word = _bzhi_u64(m_word, 63U - m_offset);
 
 			return *this;
 		}
@@ -1738,87 +1613,33 @@ namespace scw
 
 			return other;
 		}
-	};
 
 
-	template<class T, uint32_t t_elements, use_generations_concept t_use_generations, const_iterator_concept t_is_const>
-	class bitset_map_iterator<T, t_elements, t_use_generations, t_is_const, branched> : public implementation::bitset_map_iterator_base<T, t_elements, t_use_generations, t_is_const, branched>
-	{
+		[[nodiscard]] ValueType& operator*() const noexcept
+		{
+			return m_data[m_offset].value;
+		}
+
+
+		[[nodiscard]] ValueType* operator->() const noexcept
+		{
+			return reinterpret_cast<ValueType*>(&m_data[m_offset].value);
+		}
+
+
+		bool operator==(const bitset_map_iterator& other) const noexcept { return m_skip_offset + m_offset == other.m_skip_offset + other.m_offset; }
+		bool operator!=(const bitset_map_iterator& other) const noexcept { return m_skip_offset + m_offset != other.m_skip_offset + other.m_offset; }
+		bool operator>(const bitset_map_iterator& other) const noexcept { return m_skip_offset + m_offset > other.m_skip_offset + other.m_offset; }
+		bool operator<(const bitset_map_iterator& other) const noexcept { return m_skip_offset + m_offset < other.m_skip_offset + other.m_offset; }
+		bool operator>=(const bitset_map_iterator& other) const noexcept { return m_skip_offset + m_offset >= other.m_skip_offset + other.m_offset; }
+		bool operator<=(const bitset_map_iterator& other) const noexcept { return m_skip_offset + m_offset <= other.m_skip_offset + other.m_offset; }
+
 	private:
-		using Base = implementation::bitset_map_iterator_base<T, t_elements, t_use_generations, t_is_const, branched>;
-
-	public:
-		using Base::Base;
-
-	public:
-		bitset_map_iterator& operator++() noexcept
-		{
-			do
-			{
-				if (this->m_word)
-				{
-					++this->m_offset;
-					this->m_word >>= 1ULL;
-				}
-				else
-				{
-					this->m_offset = (this->m_offset + 63ULL) & ~63ULL;
-					this->m_word = this->m_skip_ptr[this->m_offset >> 6ULL];
-
-					while (!this->m_word)
-					{
-						this->m_offset += 64ULL;
-						this->m_word = this->m_skip_ptr[this->m_offset >> 6ULL];
-					}
-				}
-			} while (!(this->m_word & 1ULL));
-
-			return *this;
-		}
-
-
-		bitset_map_iterator operator++(int) noexcept
-		{
-			const bitset_map_iterator other{ *this };
-			++*this;
-
-			return other;
-		}
-
-
-		bitset_map_iterator& operator--() noexcept
-		{
-			do
-			{
-				if (this->m_word)
-				{
-					--this->m_offset;
-					this->m_word <<= 1ULL;
-				}
-				else
-				{
-					this->m_offset = (this->m_offset & ~63ULL) - 1ULL;
-					this->m_word = this->m_skip_ptr[this->m_offset >> 6ULL];
-
-					while (!this->m_word)
-					{
-						this->m_offset -= 64ULL;
-						this->m_word = this->m_skip_ptr[this->m_offset >> 6ULL];
-					}
-				}
-			} while (!(this->m_word & (1ULL << 63ULL)));
-
-			return *this;
-		}
-
-
-		bitset_map_iterator operator--(int) noexcept
-		{
-			const bitset_map_iterator other{ *this };
-			--*this;
-
-			return other;
-		}
+		DataValueType m_data;
+		SkipValueType m_skip_ptr_base;
+		uint64_t m_word;
+		uint32_t m_skip_offset;
+		uint32_t m_offset;
 	};
 
 
