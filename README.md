@@ -142,7 +142,7 @@ System is: Ryzen 7 5800x, 32 GB 3200 MHZ RAM
 | Erase | Use: ```erase(iterator)``` or ```try_erase(handle)``` |
 | Access | Use: ```try_at(handle)``` or ```*iterator``` |
 | Helpers | Use: ```is_alive(handle)```, ```size()```, ```is_empty()```, ```reserve(elements)``` |
-| AVOID | ```at()```, ```density()```, ```compress()```, ```shrink_to_fit()```, ```clear()```, Branched iterators |
+| AVOID | ```at()```, ```density()```, ```compress()```, ```shrink_to_fit()```, ```clear()``` |
 
 Ignore the rest of the api.
 
@@ -169,4 +169,4 @@ is_generation() is a direct generation lookup, and comparison. Generation reside
 
 Because the container does not shrink, is_generation() is sufficient as a liveness check for any handle returned by the container. No need to check is_alive().
 
-Iteration is either branched or bitscan. Branched increments an offset and uses that to index the bitset. That is faster than bitscan for 100% dense data. Bitscan iteration reads words, uses _tzcnt_u64 to find a set bit corresponding to an element, and it skips empty 8 byte words.
+Bitscan iteration reads words, uses _tzcnt_u64 to find a set bit corresponding to an element, and it skips empty 8 byte words.
