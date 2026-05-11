@@ -107,30 +107,10 @@ int main()
 ## Benchmarks
 The following benchmarks are not conclusive, consider them as if they only prove the container is worth benchmarking.
 
-The benchmarks are compared to plf::colony. I love plf::colony, this is not meant to attack that container. Payload is a 32 byte struct. Operations done are reserve then insert, called allocate. Dense iterate, at full capacity. Randomly erase half of the elements. Sparse iterate, at 50% elements deleted. Reinsert erased elements. Finally, dense iteration again after reinsertion. Time is the average of 100 runs.
+https://docs.google.com/spreadsheets/d/1TGnwxBs8PnPyuRr0EmKAldLRpga1lj_0ZiZVR6fzJsQ/edit?usp=sharing
 
-System is: Ryzen 7 5800x, 32 GB 3200 MHZ RAM
-
-| Operation | Payload Count | plf::colony | scw::bitset_map | Relative to scw::bitset_map |
-| --- | --- | --- | --- | --- |
-| Allocate | 10k | 270 μs | 133 μs | 2.03x |
-| Allocate | 100k | 2039 μs | 948 μs | 2.15x |
-| Allocate | 1 Million | 19912 μs | 7878 μs | 2.52x |
-| Dense Iteration | 10k | 51 μs | 13 μs | 3.92x |
-| Dense Iteration | 100k | 378 μs | 106 μs | 3.57x |
-| Dense Iteration | 1 Million | 3827 μs | 1041 μs | 3.68x |
-| Erase | 10k | 120 μs | 52 μs | 2.31x |
-| Erase | 100k | 957 μs | 420 μs | 2.28x |
-| Erase | 1 Million | 9633 μs | 4132 μs | 2.33x |
-| Sparse Iteration | 10k | 23 μs | 7 μs | 3.29x |
-| Sparse Iteration | 100k | 187 μs | 58 μs | 3.22x |
-| Sparse Iteration | 1 Million | 1896 μs | 573 μs | 3.31x |
-| Reinsertion | 10k | 121 μs | 35 μs | 3.46x |
-| Reinsertion | 100k | 968 μs | 285 μs | 3.4x |
-| Reinsertion | 1 Million | 9688 μs | 2933 μs | 3.30x |
-| Iterate after reinsert | 10k | 51 μs | 13 μs | 3.92x |
-| Iterate after reinsert | 100k | 376 μs | 106 μs | 3.55x |
-| Iterate after reinsert | 1 Million | 3832 μs | 1051 μs | 3.65x |
+In general, expect this to be slower for iteration vs a sparse set, faster in iteration vs most or perhaps all other slot maps. Expect it to be faster for allocation compared to most slot maps, and expect it to be the fastest or near the fastest for insert and erase.
+In terms of lookups, it is direct, like most non sparse -> dense slot maps. In terms of validation for dead or occupied slots, it is a direct lookup and comparison, compared to a non O(1) scan for something like plf::colony.
 
 ## API was Moved to github wiki
 
