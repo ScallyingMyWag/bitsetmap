@@ -3,6 +3,7 @@
 #include <initializer_list>
 #include <type_traits>
 #include <algorithm>
+#include <exception>
 #include <concepts>
 #include <cstdint>
 #include <cstring>
@@ -53,15 +54,20 @@ namespace scw
 		[[nodiscard]] bool decommit(void*, size_t) noexcept;
 
 
-		[[nodiscard]] inline bool query_system_page_info() noexcept
+		[[nodiscard]] inline bool query_system_page_info()
 		{
-			OS_PAGE_SIZE = platform::get_page_size();
+			OS_PAGE_SIZE = get_page_size();
+
+			if (OS_PAGE_SIZE & (OS_PAGE_SIZE - 1ULL))
+			{
+				throw std::bad_alloc();
+			}
 
 			return false;
 		}
 
 
-		inline void initialize_system_page_data() noexcept
+		inline void initialize_system_page_data()
 		{
 			[[maybe_unused]] static const bool _ = query_system_page_info();
 		}
@@ -75,28 +81,19 @@ namespace scw
 	{
 	private:
 		static_assert(std::is_nothrow_destructible_v<T>, "scw::bitset_map requires T to be nothrow destructible");
-		static_assert(t_VM_reserve_elements && t_VM_reserve_elements < UINT32_MAX, "scw::bitset_map requires reserve size to be between 1 and uint32_t max - 1");
+		static_assert(t_VM_reserve_elements&& t_VM_reserve_elements < UINT32_MAX, "scw::bitset_map requires reserve size to be between 1 and uint32_t max - 1");
 
 	private: // TYPES
 		struct IndividualisticNode
 		{
-			union
-			{
-				T value;
-				uint32_t free_list_index;
-			};
+			T value;
 		};
 
-
+		// generation in front to improve handle validation cache hits
 		struct GenerationalNode
 		{
 			uint32_t generation;
-
-			union
-			{
-				T value;
-				uint32_t free_list_index;
-			};
+			T value;
 		};
 
 	public:
@@ -473,16 +470,27 @@ namespace scw
 		}
 
 
-		void erase(T* p_element) noexcept
+		template<std::same_as<T*> ptr>
+		void erase(ptr p_element) noexcept
 		{
 			erase(index_of_(p_element));
 		}
 
 
-		template<class t_iterator>
-		t_iterator erase(const t_iterator& p_iterator) noexcept
+		iterator erase(const iterator& p_iterator) noexcept
 		{
-			t_iterator next_element = p_iterator;
+			iterator next_element = p_iterator;
+			++next_element;
+
+			destroy_element_(static_cast<uint32_t>(p_iterator.m_skip_offset + p_iterator.m_offset));
+
+			return next_element;
+		}
+
+
+		const_iterator erase(const const_iterator& p_iterator) noexcept
+		{
+			const_iterator next_element = p_iterator;
 			++next_element;
 
 			destroy_element_(static_cast<uint32_t>(p_iterator.m_skip_offset + p_iterator.m_offset));
@@ -525,14 +533,16 @@ namespace scw
 		}
 
 
-		void try_erase(T* p_element, uint32_t p_generation) noexcept
+		template<std::same_as<T*> ptr>
+		void try_erase(ptr p_element, uint32_t p_generation) noexcept
 			requires (c_generational)
 		{
 			try_erase(index_of_(p_element), p_generation);
 		}
 
 
-		void try_erase(T* p_element) noexcept
+		template<std::same_as<T*> ptr>
+		void try_erase(ptr p_element) noexcept
 			requires (!c_generational)
 		{
 			try_erase(index_of_(p_element));
@@ -640,7 +650,8 @@ namespace scw
 		}
 
 
-		[[nodiscard]] T* try_at(T* p_element, uint32_t p_generation) noexcept
+		template<std::same_as<T*> ptr>
+		[[nodiscard]] T* try_at(ptr p_element, uint32_t p_generation) noexcept
 			requires (c_generational)
 		{
 			if (is_generation(p_element, p_generation))
@@ -652,7 +663,8 @@ namespace scw
 		}
 
 
-		[[nodiscard]] T* try_at(T* p_element) noexcept
+		template<std::same_as<T*> ptr>
+		[[nodiscard]] T* try_at(ptr p_element) noexcept
 			requires (!c_generational)
 		{
 			if (is_alive(p_element))
@@ -664,7 +676,8 @@ namespace scw
 		}
 
 
-		[[nodiscard]] const T* try_at(const T* p_element, uint32_t p_generation) const noexcept
+		template<std::same_as<const T*> ptr>
+		[[nodiscard]] const T* try_at(ptr p_element, uint32_t p_generation) const noexcept
 			requires (c_generational)
 		{
 			if (is_generation(p_element, p_generation))
@@ -676,7 +689,8 @@ namespace scw
 		}
 
 
-		[[nodiscard]] const T* try_at(const T* p_element) const noexcept
+		template<std::same_as<const T*> ptr>
+		[[nodiscard]] const T* try_at(ptr p_element) const noexcept
 			requires (!c_generational)
 		{
 			if (is_alive(p_element))
@@ -700,7 +714,8 @@ namespace scw
 		}
 
 
-		[[nodiscard]] bool is_alive(T* p_element) const noexcept
+		template<std::same_as<T*> ptr>
+		[[nodiscard]] bool is_alive(ptr p_element) const noexcept
 		{
 			return is_alive(index_of_(p_element));
 		}
@@ -720,7 +735,8 @@ namespace scw
 		}
 
 
-		[[nodiscard]] bool is_generation(T* p_element, uint32_t p_generation) const noexcept
+		template<std::same_as<T*> ptr>
+		[[nodiscard]] bool is_generation(ptr p_element, uint32_t p_generation) const noexcept
 			requires c_generational
 		{
 			return reinterpret_cast<Node*>(reinterpret_cast<char*>(p_element) - offsetof(Node, value))->generation == p_generation;
@@ -755,14 +771,16 @@ namespace scw
 		}
 
 
-		[[nodiscard]] uint32_t& get_generation(T* p_element) noexcept
+		template<std::same_as<T*> ptr>
+		[[nodiscard]] uint32_t& get_generation(ptr p_element) noexcept
 			requires c_generational
 		{
 			return get_generation(index_of_(p_element));
 		}
 
 
-		[[nodiscard]] const uint32_t& get_generation(const T* p_element) const noexcept
+		template<std::same_as<const T*> ptr>
+		[[nodiscard]] const uint32_t& get_generation(ptr p_element) const noexcept
 			requires c_generational
 		{
 			return get_generation(index_of_(p_element));
@@ -796,13 +814,13 @@ namespace scw
 			return m_size;
 		}
 
-
+		// to push using unckecked insertion functions
 		[[nodiscard]] uint32_t back_capacity() const noexcept
 		{
-			return static_cast<uint32_t>(m_end_data - m_data - m_high_water_mark);
+			return m_capacity - m_high_water_mark;
 		}
 
-
+		// could be rapidly called in a loop
 		[[nodiscard]] float density() const noexcept
 		{
 			return static_cast<float>(m_size) / static_cast<float>(m_high_water_mark);
@@ -821,14 +839,12 @@ namespace scw
 			}
 		}
 
-
+		// checks done in grow()
 		void reserve(uint32_t p_reserve_count)
 		{
-			const uint32_t new_page_count = align(static_cast<size_t>(p_reserve_count) * sizeof(Node), platform::OS_PAGE_SIZE) / platform::OS_PAGE_SIZE;
-
-			if (new_page_count > m_page_count)
+			if (p_reserve_count > m_capacity)
 			{
-				grow_(new_page_count - m_page_count);
+				grow_(p_reserve_count - m_capacity);
 			}
 		}
 
@@ -845,38 +861,20 @@ namespace scw
 
 			if (m_size)
 			{
-				const iterator last_iterator = clast();
+				const uint32_t max_index = m_size - 1U;
+				const uint32_t max_word_index = m_size - 1U >> 6U;
+				const const_iterator last_iterator = clast();
 				last_index = last_iterator.m_skip_offset + last_iterator.m_offset;
+
 				uint32_t elements_to_move = 0U;
 
-				if constexpr (c_return_map)
+				for (uint32_t current_index = 0U; current_index != max_word_index; ++current_index)
 				{
-					uint32_t counted_elements = 0U;
-					uint32_t free_slots = 0U;
-
-					for (uint32_t current_index = 0U; free_slots <= m_size - counted_elements; ++current_index)
-					{
-						if (current_index != last_index >> 6U)
-						{
-							const uint64_t pop_count = _mm_popcnt_u64(m_skip_data[current_index]);
-							counted_elements += pop_count;
-							free_slots += 64ULL - pop_count;
-						}
-						else
-						{
-							const uint64_t shift_amount = _andn_u64(static_cast<uint64_t>(last_index), 63ULL);
-							const uint64_t pop_count = _mm_popcnt_u64(m_skip_data[current_index] & UINT64_MAX >> shift_amount);
-							counted_elements += pop_count;
-							free_slots += 64ULL - pop_count - shift_amount;
-						}
-					}
-
-					elements_to_move = m_size - counted_elements;
+					elements_to_move += static_cast<uint32_t>(64ULL - _mm_popcnt_u64(m_skip_data[current_index]));
 				}
-				else
-				{
-					elements_to_move = (last_index + 1U) - m_size;
-				}
+
+				const uint64_t shift_amount = _andn_u64(static_cast<uint64_t>(max_index), 63ULL);
+				elements_to_move += 64ULL - _mm_popcnt_u64(m_skip_data[max_word_index] & UINT64_MAX >> shift_amount) - shift_amount;
 
 				if (elements_to_move)
 				{
@@ -886,89 +884,97 @@ namespace scw
 
 						if (static_cast<float>(elements_to_move) / static_cast<float>(pow_2_elements_to_move) > 0.6f)
 						{
-							pow_2_elements_to_move *= 2ULL;
+							pow_2_elements_to_move <<= 1ULL;
 						}
 
 						map.allocate(pow_2_elements_to_move);
 					}
 
-					uint32_t current_index = 0U;
-					uint64_t current_word = ~m_skip_data[current_index >> 6U];
-					const uint64_t shift_amount = _andn_u64(static_cast<uint64_t>(last_index), 63ULL);
-					uint64_t last_word = m_skip_data[last_index >> 6U] & UINT64_MAX >> shift_amount;
+					Node* hole_data = m_data;
+					uint64_t* hole_skip_data = m_skip_data;
+					uint64_t current_holes_word = ~*hole_skip_data;
+					uint32_t hole_index = 0U;
+					uint32_t hole_offset = 0U;
 
-					while (current_index < last_index)
+					Node* element_data = m_data + (m_size & ~63U);
+					uint64_t* element_skip_data = m_skip_data + (m_size >> 6U);
+					uint64_t current_elements_word = *element_skip_data & UINT64_MAX << (m_size & 63U);
+					uint32_t element_offset = 0U;
+					uint32_t element_index = m_size & ~63U;
+
+					while (elements_to_move)
 					{
-						while (!current_word && current_index < last_index)
+						while (!current_holes_word)
 						{
-							current_index += 64U;
-							current_word = ~m_skip_data[current_index >> 6U];
+							hole_data += 64ULL;
+							hole_index += 64U;
+							++hole_skip_data;
+							current_holes_word = ~*hole_skip_data;
 						}
 
-						uint64_t zero_count = _tzcnt_u64(current_word);
-						current_index = (current_index & ~63U) + zero_count;
-						current_word = _blsr_u64(current_word);
+						hole_offset = static_cast<uint32_t>(_tzcnt_u64(current_holes_word));
+						current_holes_word = _blsr_u64(current_holes_word);
 
-						while (!last_word && current_index < last_index)
+						while (!current_elements_word)
 						{
-							last_index -= 64U;
-							last_word = m_skip_data[last_index >> 6U];
+							element_data += 64ULL;
+							element_index += 64U;
+							++element_skip_data;
+							current_elements_word = *element_skip_data;
 						}
 
-						zero_count = _lzcnt_u64(last_word);
-						last_index = (last_index | 63U) - zero_count;
-						last_word = _bzhi_u64(last_word, static_cast<uint32_t>(63ULL - zero_count));
+						element_offset = static_cast<uint32_t>(_tzcnt_u64(current_elements_word));
+						current_elements_word = _blsr_u64(current_elements_word);
 
-						if (current_index < last_index)
+						if constexpr (c_generational)
 						{
-							if constexpr (c_generational)
-							{
-								m_data[current_index].generation = m_data[last_index].generation;
-							}
-
-							::new(&m_data[current_index].value) T(std::move(m_data[last_index].value));
-
-							if constexpr (!std::is_trivially_destructible_v<T>)
-							{
-								m_data[last_index].value.~T();
-							}
-
-							if constexpr (c_return_map)
-							{
-								map.insert(last_index, current_index);
-							}
+							hole_data[hole_offset].generation = element_data[element_offset].generation;
 						}
+
+						::new(&hole_data[hole_offset].value) T(std::move(element_data[element_offset].value));
+
+						if constexpr (!std::is_trivially_destructible_v<T>)
+						{
+							element_data[element_offset].value.~T();
+						}
+
+						if constexpr (c_return_map)
+						{
+							map.insert(element_index + element_offset, hole_index + hole_offset);
+						}
+
+						--elements_to_move;
 					}
 				}
 
-				decommit_pages_(m_size);
+				decommit_pages_(max_index);
 			}
 			else
 			{
 				decommit_pages_(last_index);
 			}
 
+			m_free_list = UINT32_MAX;
 			m_high_water_mark = m_size;
-			m_free_list_index = UINT32_MAX;
 
 			if constexpr (c_generational)
 			{
-				memset(m_data + m_high_water_mark, 0, static_cast<size_t>(m_end_data - m_data - m_high_water_mark) * sizeof(Node));
+				memset(m_data + m_high_water_mark, 0, static_cast<size_t>(m_capacity - m_high_water_mark) * sizeof(Node));
 			}
 
-			memset(m_skip_data, ~0, get_skip_bytes_for_page_count_(m_page_count));
+			memset(m_skip_data, 0xFF, get_skip_bytes_for_element_count_(m_capacity));
 
 			return map;
 		}
 
-
+		// sets all m_skip_data bits past high water mark
 		void shrink_to_fit() noexcept
 		{
 			uint32_t index = 0U;
 
 			if (m_size)
 			{
-				const iterator last_iterator = clast();
+				const const_iterator last_iterator = clast();
 				index = last_iterator.m_skip_offset + last_iterator.m_offset;
 
 				m_high_water_mark = index + 1U;
@@ -977,74 +983,131 @@ namespace scw
 
 				if constexpr (c_generational)
 				{
-					memset(m_data + index + 1ULL, 0, static_cast<size_t>(m_end_data - m_data - index - 1ULL) * sizeof(Node));
+					memset(m_data + m_high_water_mark, 0, static_cast<size_t>(m_capacity - m_high_water_mark) * sizeof(Node));
 				}
 
 				m_skip_data[m_high_water_mark >> 6U] |= UINT64_MAX << static_cast<uint64_t>(m_high_water_mark & 63U);
-				const size_t bytes_to_reset = get_skip_bytes_for_page_count_(m_page_count) - static_cast<size_t>((m_high_water_mark >> 6U) + 1U) * sizeof(uint64_t);
-				memset(m_skip_data + (m_high_water_mark >> 6U) + 1ULL, ~0, bytes_to_reset);
+				const size_t bytes_to_reset = get_skip_bytes_for_element_count_(m_capacity) - (static_cast<size_t>(m_high_water_mark >> 6U) + 1ULL) * sizeof(uint64_t);
+				memset(m_skip_data + (m_high_water_mark >> 6U) + 1ULL, 0xFF, bytes_to_reset);
 
 				uint32_t new_free_list_index = UINT32_MAX;
-				uint32_t current_index = index;
-				const uint64_t shift_amount = _andn_u64(static_cast<uint64_t>(current_index), 63ULL);
-				uint64_t word = ~m_skip_data[current_index >> 6U] & UINT64_MAX >> shift_amount;
 
-				while (true)
+				for (uint32_t current_index = index >> 6U; current_index != UINT32_MAX; --current_index)
 				{
-					while (!word)
+					if (m_skip_data[current_index] != UINT64_MAX)
 					{
-						current_index = (current_index & ~63U) - 1U;
-
-						if (current_index == UINT32_MAX)
-						{
-							goto LOOP_EXIT;
-						}
-
-						word = ~m_skip_data[current_index >> 6U];
+						m_free_table[current_index] = new_free_list_index;
+						new_free_list_index = current_index;
 					}
-
-					const uint64_t zero_count = _lzcnt_u64(word);
-					current_index = (current_index | 63U) - zero_count;
-					word = _bzhi_u64(word, 63U - zero_count);
-
-					m_data[current_index].free_list_index = new_free_list_index;
-					new_free_list_index = current_index;
 				}
 
-				LOOP_EXIT:
-
-				m_free_list_index = new_free_list_index;
+				m_free_list = new_free_list_index;
 
 				return;
 			}
 
 			decommit_pages_(index);
 
-			memset(m_skip_data, ~0, get_skip_bytes_for_page_count_(m_page_count));
+			memset(m_skip_data, 0xFF, get_skip_bytes_for_element_count_(m_capacity));
 
+			m_free_list = UINT32_MAX;
 			m_high_water_mark = 0U;
-			m_free_list_index = UINT32_MAX;
 		}
 
 
 		void clear() noexcept
 		{
-			if constexpr (!std::is_trivially_destructible_v<T>)
+			if constexpr (c_generational || !std::is_trivially_destructible_v<T>)
 			{
-				for (iterator it = begin(); it != end(); ++it)
+				Node* data = m_data;
+				Node* const end_data = data + (m_high_water_mark & ~63U);
+				uint64_t* word_ptr = m_skip_data;
+				uint64_t word = *word_ptr;
+				uint64_t offset = 0ULL;
+				const uint64_t end_offset = static_cast<uint64_t>(m_high_water_mark & 63U);
+
+				while (data != end_data) [[likely]]
 				{
-					(*it).~T();
+#ifdef __GNUC__ // test + jump can be up to ~23% faster than jumping on zero flag for whatever reason. MSVC is not smart enough to jump on zero flag. GCC uses the zf set by bslr which is slower than test
+					if (word)
+					{
+						do
+						{
+							offset = _tzcnt_u64(word);
+							word = _blsr_u64(word);
+
+							if constexpr (c_generational)
+							{
+								++data[offset].generation;
+							}
+
+							if constexpr (!std::is_trivially_destructible_v<T>)
+							{
+								data[offset].value.~T();
+							}
+
+							bool test;
+							__asm__("test %1,%1" : "=@ccz"(test) : "r"(word));
+
+							if (test)
+							{
+								break;
+							}
+						} while (true);
+					}
+#else
+					while (word)
+					{
+						offset = _tzcnt_u64(word);
+						word = _blsr_u64(word);
+
+						if constexpr (c_generational)
+						{
+							++data[offset].generation;
+						}
+
+						if constexpr (!std::is_trivially_destructible_v<T>)
+						{
+							data[offset].value.~T();
+						}
+					}
+#endif
+					do
+					{
+						data += 64ULL;
+						++word_ptr;
+						word = *word_ptr;
+					} while (!word);
+				}
+
+				offset = _tzcnt_u64(word);
+
+				while (offset != end_offset)
+				{
+					if constexpr (c_generational)
+					{
+						++data[offset].generation;
+					}
+
+					if constexpr (!std::is_trivially_destructible_v<T>)
+					{
+						data[offset].value.~T();
+					}
+
+					word = _blsr_u64(word);
+					offset = _tzcnt_u64(word);
 				}
 			}
 
-			memset(m_skip_data, ~0, static_cast<size_t>((m_high_water_mark >> 6U) + 1U) * sizeof(uint64_t));
+			memset(m_skip_data, 0xFF, static_cast<size_t>((m_high_water_mark >> 6U) + 1U) * sizeof(uint64_t));
 
+			m_free_list = UINT32_MAX;
 			m_high_water_mark = 0U;
 			m_size = 0U;
-			m_free_list_index = UINT32_MAX;
 		}
 
 		// ITERATORS
+		// if there is no element at index 0, find the first element
 		[[nodiscard]] iterator begin() noexcept
 		{
 			iterator to_return(m_data, m_skip_data, *m_skip_data & UINT64_MAX << 1ULL, 0U, 0U);
@@ -1058,7 +1121,7 @@ namespace scw
 			return iterator(m_data + (m_high_water_mark & ~63U), m_skip_data, 0ULL, m_high_water_mark & ~63U, m_high_water_mark & 63U);
 		}
 
-
+		// to be used in reverse, double shift instead of add to avoid UB
 		[[nodiscard]] iterator last() noexcept
 		{
 			if (!m_size)
@@ -1121,33 +1184,41 @@ namespace scw
 		}
 
 	private: // IMPLEMENTATION
+		// VM reservation split between three memory blocks here
 		void allocate_(uint32_t p_reserve_count)
 		{
-			[[maybe_unused]] static const bool _ = initialize_reserve_sizes_();
+			constexpr static size_t aligned_data_bytes = align_(get_bytes_for_element_count_(t_VM_reserve_elements), alignof(uint64_t));
+			constexpr static size_t aligned_skip_array_bytes = align_(get_skip_bytes_for_element_count_(t_VM_reserve_elements), alignof(uint64_t*));
+			constexpr static size_t aligned_free_table_bytes = get_free_table_bytes_for_element_count_(t_VM_reserve_elements);
+
+			[[maybe_unused]] static const bool _ = initialize_reserve_sizes_(aligned_data_bytes, aligned_skip_array_bytes, aligned_free_table_bytes);
 
 			const uint32_t elements_to_reserve = std::clamp(p_reserve_count, 1U, t_VM_reserve_elements);
 
-			size_t reserve_size = get_allocation_bytes_for_element_count_(elements_to_reserve);
-			size_t skip_reserve_size = get_skip_bytes_for_page_count_(static_cast<uint32_t>(reserve_size / platform::OS_PAGE_SIZE));
-
-			m_page_count = static_cast<uint32_t>(reserve_size / platform::OS_PAGE_SIZE);
+			const size_t reserve_size = get_bytes_for_element_count_(elements_to_reserve);
+			const size_t skip_reserve_size = get_skip_bytes_for_element_count_(elements_to_reserve);
+			const size_t free_table_reserve_size = get_free_table_bytes_for_element_count_(elements_to_reserve);
 
 			m_data = static_cast<Node*>(platform::reserve(sm_reserved_bytes));
-			m_skip_data = static_cast<uint64_t*>(platform::reserve(sm_skip_reserved_bytes));
 
-			if (!m_data || !m_skip_data) [[unlikely]]
+			if (!m_data) [[unlikely]]
 			{
 				allocate_fail_();
 			}
+
+			m_skip_data = reinterpret_cast<uint64_t*>(reinterpret_cast<char*>(m_data) + aligned_data_bytes);
+			m_free_table = reinterpret_cast<uint32_t*>(reinterpret_cast<char*>(m_data) + aligned_data_bytes + aligned_skip_array_bytes);
+
+			m_capacity = elements_to_reserve;
+
 			if (!platform::commit(m_data, reserve_size) ||
-				!platform::commit(m_skip_data, skip_reserve_size)) [[unlikely]]
+				!platform::commit(m_skip_data, skip_reserve_size) ||
+				!platform::commit(m_free_table, free_table_reserve_size)) [[unlikely]]
 			{
 				allocate_fail_();
 			}
 
-			memset(m_skip_data, ~0, skip_reserve_size);
-
-			m_end_data = m_data + reserve_size / sizeof(Node);
+			memset(m_skip_data, 0xFF, skip_reserve_size);
 		}
 
 
@@ -1159,59 +1230,51 @@ namespace scw
 				{
 					std::abort();
 				}
-			}
-			if (m_skip_data)
-			{
-				if (!platform::free(m_skip_data, sm_skip_reserved_bytes)) [[unlikely]]
-				{
-					std::abort();
-				}
+
+				m_data = nullptr;
 			}
 
 			throw std::bad_alloc();
 		}
 
 
-		void copy_bitset_map_(const bitset_map& other)
+		void copy_bitset_map_(const bitset_map& p_other)
 		{
-			m_high_water_mark = other.m_high_water_mark;
-			m_size = other.m_size;
-			m_free_list_index = other.m_free_list_index;
+			m_free_list = p_other.m_free_list;
+			m_high_water_mark = p_other.m_high_water_mark;
+			m_size = p_other.m_size;
 
 			allocate_(m_high_water_mark);
 
-			memcpy(m_skip_data, other.m_skip_data, get_skip_bytes_for_page_count_(m_page_count));
+			memcpy(m_skip_data, p_other.m_skip_data, get_skip_bytes_for_element_count_(m_high_water_mark));
+			memcpy(m_free_table, p_other.m_free_table, get_free_table_bytes_for_element_count_(m_high_water_mark));
 
 			if constexpr (std::is_trivially_copyable_v<T>)
 			{
-				memcpy(m_data, other.m_data, static_cast<size_t>(m_high_water_mark) * sizeof(Node));
+				memcpy(m_data, p_other.m_data, static_cast<size_t>(m_high_water_mark) * sizeof(Node));
 			}
 			else
 			{
-				uint32_t current_index = 0U;
+				uint32_t index = 0U;
 
 				try
 				{
-					for (; current_index != m_high_water_mark; ++current_index)
+					for (; index != m_high_water_mark; ++index)
 					{
 						if constexpr (c_generational)
 						{
-							m_data[current_index].generation = other.m_data[current_index].generation;
+							m_data[index].generation = p_other.m_data[index].generation;
 						}
 
-						if (is_alive(current_index))
+						if (is_alive(index))
 						{
-							::new(&m_data[current_index].value) T(other.m_data[current_index].value);
-						}
-						else
-						{
-							::new(&m_data[current_index].free_list_index) uint32_t(other.m_data[current_index].free_list_index);
+							::new(&m_data[index].value) T(p_other.m_data[index].value);
 						}
 					}
 				}
 				catch (...)
 				{
-					deallocate_<true>(current_index);
+					deallocate_<true>(index);
 
 					throw;
 				}
@@ -1222,29 +1285,29 @@ namespace scw
 		void steal_other_(bitset_map&& p_other) noexcept
 		{
 			m_data = p_other.m_data;
-			m_end_data = p_other.m_end_data;
 			m_skip_data = p_other.m_skip_data;
-			m_page_count = p_other.m_page_count;
+			m_free_table = p_other.m_free_table;
+			m_free_list = p_other.m_free_list;
+			m_capacity = p_other.m_capacity;
 			m_high_water_mark = p_other.m_high_water_mark;
 			m_size = p_other.m_size;
-			m_free_list_index = p_other.m_free_list_index;
 
 			p_other.m_data = nullptr;
-			p_other.m_end_data = nullptr;
 			p_other.m_skip_data = nullptr;
-			p_other.m_page_count = 0U;
+			p_other.m_free_table = nullptr;
+			p_other.m_free_list = UINT32_MAX;
+			p_other.m_capacity = 0U;
 			p_other.m_high_water_mark = 0U;
 			p_other.m_size = 0U;
-			p_other.m_free_list_index = 0U;
 		}
 
-
+		// this is okay, m_data is checked
 		template<bool t_enable_last_index = false>
 		void deallocate_(uint32_t p_last_index = 0U) noexcept
 		{
 			if constexpr (!std::is_trivially_destructible_v<T>)
 			{
-				if (m_data && m_skip_data)
+				if (m_data)
 				{
 					for (T& element : *this)
 					{
@@ -1270,26 +1333,20 @@ namespace scw
 
 				m_data = nullptr;
 			}
-			if (m_skip_data)
-			{
-				if (!platform::free(m_skip_data, sm_skip_reserved_bytes)) [[unlikely]]
-				{
-					std::abort();
-				}
-
-				m_skip_data = nullptr;
-			}
 		}
 
-
-		void grow_(uint32_t p_pages_to_commit)
+		// grow intended to silently fail when full
+		void grow_(uint32_t p_elements_to_commit)
 		{
-			const size_t old_bytes = static_cast<size_t>(m_page_count) * platform::OS_PAGE_SIZE;
-			const size_t old_skip_array_bytes = get_skip_bytes_for_page_count_(m_page_count);
-			const uint32_t max_committable_pages = static_cast<uint32_t>((sm_reserved_bytes - old_bytes) / platform::OS_PAGE_SIZE);
-			p_pages_to_commit = std::min(p_pages_to_commit, max_committable_pages);
-			const size_t bytes_to_commit = static_cast<size_t>(p_pages_to_commit) * platform::OS_PAGE_SIZE;
-			const size_t skip_bytes_to_commit = get_skip_bytes_for_page_count_(m_page_count + p_pages_to_commit) - old_skip_array_bytes;
+			const size_t old_bytes = get_bytes_for_element_count_(m_capacity);
+			const size_t old_skip_bytes = get_skip_bytes_for_element_count_(m_capacity);
+			const size_t old_free_table_bytes = get_free_table_bytes_for_element_count_(m_capacity);
+
+			p_elements_to_commit = std::min(p_elements_to_commit, t_VM_reserve_elements - m_capacity);
+
+			const size_t bytes_to_commit = get_bytes_for_element_count_(p_elements_to_commit);
+			const size_t skip_bytes_to_commit = get_skip_bytes_for_element_count_(m_capacity + p_elements_to_commit) - old_skip_bytes;
+			const size_t free_table_bytes_to_commit = get_free_table_bytes_for_element_count_(m_capacity + p_elements_to_commit) - old_free_table_bytes;
 
 			if (bytes_to_commit)
 			{
@@ -1298,65 +1355,90 @@ namespace scw
 					throw std::bad_alloc();
 				}
 			}
+
 			if (skip_bytes_to_commit)
 			{
-				if (!platform::commit(reinterpret_cast<char*>(m_skip_data) + old_skip_array_bytes, skip_bytes_to_commit)) [[unlikely]]
+				if (!platform::commit(reinterpret_cast<char*>(m_skip_data) + old_skip_bytes, skip_bytes_to_commit)) [[unlikely]]
 				{
 					throw std::bad_alloc();
 				}
 			}
 
-			memset(reinterpret_cast<char*>(m_skip_data) + old_skip_array_bytes, ~0, skip_bytes_to_commit);
+			if (free_table_bytes_to_commit)
+			{
+				if (!platform::commit(reinterpret_cast<char*>(m_free_table) + old_free_table_bytes, free_table_bytes_to_commit)) [[unlikely]]
+				{
+					throw std::bad_alloc();
+				}
+			}
 
-			m_page_count = m_page_count + p_pages_to_commit;
-			m_end_data = m_data + static_cast<size_t>(m_page_count) * platform::OS_PAGE_SIZE / sizeof(Node);
+			memset(reinterpret_cast<char*>(m_skip_data) + old_skip_bytes, 0xFF, skip_bytes_to_commit);
+
+			m_capacity = m_capacity + p_elements_to_commit;
 		}
 
-
+		// here, dependency of the not on word doesn't seem to matter, nor does the word load. Compiler seems to cache word here when insert is called in a loop
+		// chunked free list here increases latency, but reduces memory accesses drastically and removes read before write dependency, making effective latency less compared to intrusive free list
 		[[nodiscard]] uint32_t get_allocation_slot_()
 		{
-			if (m_free_list_index != UINT32_MAX)
+			if (m_free_list != UINT32_MAX)
 			{
-				const uint32_t return_index = m_free_list_index;
-				m_free_list_index = m_data[m_free_list_index].free_list_index;
+				uint64_t word = m_skip_data[m_free_list];
+
+				const uint64_t offset = _tzcnt_u64(~word);
+				word |= 1ULL << offset;
+				const uint32_t slot = static_cast<uint32_t>((static_cast<uint64_t>(m_free_list) << 6ULL) + offset);
+
+				m_skip_data[m_free_list] = word;
+
+				if (word == UINT64_MAX) [[unlikely]]
+				{
+					m_free_list = m_free_table[m_free_list];
+				}
+
 				++m_size;
 
-				toggle_bit_(return_index);
-
-				return return_index;
+				return slot;
 			}
-			else if (m_data + m_high_water_mark + 1ULL == m_end_data)
+
+			const uint32_t slot = m_high_water_mark;
+
+			if (slot + 1U >= m_capacity)
 			{
-				grow_(m_page_count);
+				grow_(m_capacity);
 			}
 
 			++m_high_water_mark;
 			++m_size;
 
-			return m_high_water_mark - 1U;
+			return slot;
 		}
 
 
 		[[nodiscard]] uint32_t get_end_allocation_slot_()
 		{
-			if (m_data + m_high_water_mark + 1ULL == m_end_data)
+			const uint32_t slot = m_high_water_mark;
+
+			if (slot + 1U >= m_capacity)
 			{
-				grow_(m_page_count);
+				grow_(m_capacity);
 			}
 
 			++m_high_water_mark;
 			++m_size;
 
-			return m_high_water_mark - 1U;
+			return slot;
 		}
 
 
 		[[nodiscard]] uint32_t get_unchecked_allocation_slot_() noexcept
 		{
+			const uint32_t slot = m_high_water_mark;
+
 			++m_high_water_mark;
 			++m_size;
 
-			return m_high_water_mark - 1U;
+			return slot;
 		}
 
 
@@ -1368,15 +1450,15 @@ namespace scw
 
 			if constexpr (c_generational)
 			{
-				return { static_cast<uint32_t>(p_slot), m_data[p_slot].generation };
+				return { p_slot, m_data[p_slot].generation };
 			}
 			else
 			{
-				return { static_cast<uint32_t>(p_slot) };
+				return { p_slot };
 			}
 		}
 
-
+		// rollback can be calculated from p_slot here, free table is not overwritten so that's fine
 		template<class... Args>
 		[[nodiscard]] handle construct_in_slot_(uint32_t p_slot, uint32_t p_high_water_mark, Args&&... p_args)
 		{
@@ -1388,16 +1470,13 @@ namespace scw
 			{
 				if (m_high_water_mark == p_high_water_mark)
 				{
-					m_data[p_slot].free_list_index = m_free_list_index;
-
+					m_free_list = p_slot >> 6U;
 					--m_size;
-					m_free_list_index = p_slot;
-
-					toggle_bit_(static_cast<uint32_t>(p_slot));
+					m_skip_data[m_free_list] = _andn_u64(1ULL << (p_slot & 63U), m_skip_data[m_free_list]);
 				}
 				else
 				{
-					m_high_water_mark = p_high_water_mark;
+					--m_high_water_mark;
 					--m_size;
 				}
 
@@ -1406,17 +1485,25 @@ namespace scw
 
 			if constexpr (c_generational)
 			{
-				return { static_cast<uint32_t>(p_slot), m_data[p_slot].generation };
+				return { p_slot, m_data[p_slot].generation };
 			}
 			else
 			{
-				return { static_cast<uint32_t>(p_slot) };
+				return { p_slot };
 			}
 		}
 
-
+		// compared to a per element intrusive free list, this design is slower computationally but reduces memory accesses drastically
+		// should be slightly slower in hot cache and much faster when not hot in cache
 		void destroy_element_(uint32_t p_index) noexcept
 		{
+			const uint32_t chunk_index = p_index >> 6U;
+			const uint64_t word = m_skip_data[chunk_index];
+
+			--m_size;
+
+			m_skip_data[chunk_index] = _andn_u64(1ULL << (p_index & 63U), word);
+
 			if constexpr (c_generational)
 			{
 				++m_data[p_index].generation;
@@ -1427,46 +1514,68 @@ namespace scw
 				m_data[p_index].value.~T();
 			}
 
-			::new(&m_data[p_index].free_list_index) uint32_t(m_free_list_index);
-			m_free_list_index = p_index;
-
-			--m_size;
-
-			toggle_bit_(p_index);
+			if (word == UINT64_MAX) [[unlikely]]
+			{
+				::new(m_free_table + chunk_index) uint32_t(m_free_list);
+				m_free_list = chunk_index;
+			}
 		}
 
-
+		// decommits physical memory, making sure not to decommit page when one memory block bleeds into the page of another
 		void decommit_pages_(uint32_t p_index) noexcept
 		{
-			size_t bytes_used = (static_cast<size_t>(p_index) + 1ULL) * sizeof(Node);
-			bytes_used = align(bytes_used, platform::OS_PAGE_SIZE);
-			const uint32_t pages_used = bytes_used / platform::OS_PAGE_SIZE;
-			const size_t bytes_to_decommit = static_cast<size_t>(m_page_count - pages_used) * platform::OS_PAGE_SIZE;
+			const size_t bytes_occupied = align_(static_cast<size_t>(p_index + 1U) * sizeof(Node), platform::OS_PAGE_SIZE);
+			const size_t bytes_comitted = align_(m_capacity * sizeof(Node), platform::OS_PAGE_SIZE);
+			size_t bytes_to_decommit = bytes_comitted - bytes_occupied;
 
-			const size_t previous_skip_array_bytes = get_skip_bytes_for_page_count_(m_page_count);
-			const size_t skip_array_bytes = get_skip_bytes_for_page_count_(pages_used);
-			const size_t skip_array_bytes_to_decommit = (previous_skip_array_bytes - skip_array_bytes);
+			if (reinterpret_cast<char*>(m_data) + bytes_comitted > reinterpret_cast<char*>(m_skip_data))
+			{
+				bytes_to_decommit -= std::min(bytes_to_decommit, platform::OS_PAGE_SIZE);
+			}
+
+			const size_t skip_page_offset = reinterpret_cast<uintptr_t>(m_skip_data) - _andn_u64(platform::OS_PAGE_SIZE - 1ULL, reinterpret_cast<uintptr_t>(m_skip_data));
+			const size_t skip_bytes_occupied = align_(skip_page_offset + get_skip_bytes_for_element_count_(static_cast<size_t>(p_index + 1U)), platform::OS_PAGE_SIZE);
+			const size_t skip_bytes_comitted = align_(skip_page_offset + get_skip_bytes_for_element_count_(m_capacity), platform::OS_PAGE_SIZE);
+			size_t skip_bytes_to_decommit = skip_bytes_comitted - skip_bytes_occupied;
+
+			if (reinterpret_cast<char*>(m_skip_data) - skip_page_offset + skip_bytes_comitted > reinterpret_cast<char*>(m_free_table))
+			{
+				skip_bytes_to_decommit -= std::min(skip_bytes_to_decommit, platform::OS_PAGE_SIZE);
+			}
+
+			const size_t free_table_page_offset = reinterpret_cast<uintptr_t>(m_free_table) - _andn_u64(platform::OS_PAGE_SIZE - 1ULL, reinterpret_cast<uintptr_t>(m_free_table));
+			const size_t free_table_bytes_occupied = align_(free_table_page_offset + get_free_table_bytes_for_element_count_(static_cast<size_t>(p_index + 1U)), platform::OS_PAGE_SIZE);
+			const size_t free_table_bytes_comitted = align_(free_table_page_offset + get_free_table_bytes_for_element_count_(m_capacity), platform::OS_PAGE_SIZE);
+			const size_t free_table_bytes_to_decommit = free_table_bytes_comitted - free_table_bytes_occupied;
 
 			if (bytes_to_decommit)
 			{
-				if (!platform::decommit(reinterpret_cast<char*>(m_data) + bytes_used, bytes_to_decommit)) [[unlikely]]
-				{
-					std::abort();
-				}
-			}
-			if (skip_array_bytes_to_decommit)
-			{
-				if (!platform::decommit(reinterpret_cast<char*>(m_skip_data) + skip_array_bytes, skip_array_bytes_to_decommit)) [[unlikely]]
+				if (!platform::decommit(reinterpret_cast<char*>(m_data) + bytes_occupied, bytes_to_decommit)) [[unlikely]]
 				{
 					std::abort();
 				}
 			}
 
-			m_end_data = m_data + bytes_used / sizeof(Node);
-			m_page_count = pages_used;
+			if (skip_bytes_to_decommit)
+			{
+				if (!platform::decommit(reinterpret_cast<char*>(m_skip_data) - skip_page_offset + skip_bytes_occupied, skip_bytes_to_decommit)) [[unlikely]]
+				{
+					std::abort();
+				}
+			}
+
+			if (free_table_bytes_to_decommit)
+			{
+				if (!platform::decommit(reinterpret_cast<char*>(m_free_table) - free_table_page_offset + free_table_bytes_occupied, free_table_bytes_to_decommit)) [[unlikely]]
+				{
+					std::abort();
+				}
+			}
+
+			m_capacity = static_cast<uint32_t>(bytes_occupied / sizeof(Node));
 		}
 
-
+		// helpers
 		[[nodiscard]] uint32_t index_of_(T* element) noexcept
 		{
 			return reinterpret_cast<Node*>(reinterpret_cast<char*>(element) - offsetof(Node, value)) - m_data;
@@ -1484,55 +1593,50 @@ namespace scw
 			return m_skip_data[p_index >> 6U] & 1ULL << static_cast<uint64_t>(p_index & 63U);
 		}
 
-
-		void toggle_bit_(uint32_t p_index) noexcept
+		// calculates bytes for the three memory blocks, adding sentinel to the end for high water mark to reside when full
+		[[nodiscard]] constexpr static size_t get_bytes_for_element_count_(uint32_t p_count) noexcept
 		{
-			m_skip_data[p_index >> 6U] ^= 1ULL << static_cast<uint64_t>(p_index & 63U);
+			return static_cast<size_t>(p_count) * sizeof(Node);
 		}
 
 
-		[[nodiscard]] constexpr static size_t get_allocation_bytes_for_element_count_(uint32_t p_count) noexcept
+		[[nodiscard]] constexpr static size_t get_skip_bytes_for_element_count_(uint32_t p_count) noexcept
 		{
-			return align(static_cast<size_t>(p_count) * sizeof(Node), platform::OS_PAGE_SIZE);
+			return align_(static_cast<size_t>(p_count) + 1ULL, 64ULL) >> 3ULL;
 		}
 
 
-		[[nodiscard]] constexpr static size_t get_skip_bytes_for_page_count_(uint32_t p_page_count) noexcept
+		[[nodiscard]] constexpr static size_t get_free_table_bytes_for_element_count_(uint32_t p_count) noexcept
 		{
-			size_t skip_array_bytes = static_cast<size_t>(p_page_count) * platform::OS_PAGE_SIZE / sizeof(Node) + 64ULL;
-			skip_array_bytes = align(skip_array_bytes, 64ULL) >> 3ULL;
-
-			return align(skip_array_bytes, platform::OS_PAGE_SIZE);
+			return (align_(static_cast<size_t>(p_count) + 1ULL, 64ULL) >> 6ULL) * sizeof(uint32_t);
 		}
 
-
-		[[nodiscard]] static bool initialize_reserve_sizes_() noexcept
+		// gets page size and shift amount once in the program's run time
+		[[nodiscard]] static bool initialize_reserve_sizes_(size_t p_aligned_data_bytes, size_t p_skip_array_bytes, size_t p_free_table_bytes)
 		{
 			platform::initialize_system_page_data();
 
-			sm_reserved_bytes = get_allocation_bytes_for_element_count_(t_VM_reserve_elements);
-			sm_skip_reserved_bytes = get_skip_bytes_for_page_count_(static_cast<uint32_t>(sm_reserved_bytes / platform::OS_PAGE_SIZE));
+			sm_reserved_bytes = align_(p_aligned_data_bytes + p_skip_array_bytes + p_free_table_bytes, platform::OS_PAGE_SIZE);
 
 			return false;
 		}
 
-
-		[[nodiscard]] constexpr static size_t align(size_t p_value, size_t p_alignment) noexcept
+		// aligns to next boundary
+		[[nodiscard]] constexpr static size_t align_(size_t p_value, size_t p_alignment) noexcept
 		{
 			return (p_value + p_alignment - 1ULL) & ~(p_alignment - 1ULL);
 		}
 
 	private: // MEMBERS
 		inline static size_t sm_reserved_bytes;
-		inline static size_t sm_skip_reserved_bytes;
 
 		Node* m_data = nullptr;
-		Node* m_end_data = nullptr;
 		uint64_t* m_skip_data = nullptr;
-		uint32_t m_page_count = 0U;
+		uint32_t* m_free_table = nullptr;
+		uint32_t m_free_list = UINT32_MAX;
+		uint32_t m_capacity = 0U;
 		uint32_t m_high_water_mark = 0U;
 		uint32_t m_size = 0U;
-		uint32_t m_free_list_index = UINT32_MAX;
 	};
 
 
@@ -1565,6 +1669,7 @@ namespace scw
 			m_data(p_data), m_skip_ptr_base(p_skip_ptr_base), m_word(p_word), m_skip_offset(p_skip_offset), m_offset(p_offset) {}
 
 	public:
+		// this is extremely fast, highly predictable branch. ttd is essentially just base + tzcnt(word), while blsr is computed alongside payload. 4 cycles ttd in most cases
 		bitset_map_iterator& operator++() noexcept
 		{
 			while (!m_word) [[unlikely]]
@@ -1589,18 +1694,18 @@ namespace scw
 			return other;
 		}
 
-
+		// 5 cycle ttd here
 		bitset_map_iterator& operator--() noexcept
 		{
-			while (!m_word)
+			while (!m_word) [[unlikely]]
 			{
 				m_data -= 64ULL;
-				m_offset -= 64ULL;
+				m_skip_offset -= 64U;
 				m_word = m_skip_ptr_base[m_skip_offset >> 6U];
 			}
 
-			m_offset = static_cast<uint32_t>(_lzcnt_u64(m_word));
-			m_word = _bzhi_u64(m_word, 63U - m_offset);
+			m_offset = 63U - static_cast<uint32_t>(_lzcnt_u64(m_word));
+			m_word = _bzhi_u64(m_word, m_offset);
 
 			return *this;
 		}
@@ -1655,7 +1760,7 @@ namespace scw
 			uint32_t key = 0U;
 			uint32_t value = 0U;
 
-			[[nodiscard]] bool is_empty() const { return psl == -1; };
+			[[nodiscard]] bool is_empty() const noexcept { return psl == -1; };
 		};
 
 	private:
