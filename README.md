@@ -15,7 +15,8 @@ This slot map specifically provides:
 - Fully contiguous virtual memory
 - Relies on VirtualAlloc on windows, and mmap on Linux
 - Growable, up to reserved size
-- Fast reinsert through intrusive free list
+- ~1.5 bits (not bytes) of memory overhead per element, not including VM page overcommitting
+- Fast reinsert through chunked free list
 - Fast erase
 - Direct, array indexed lookups
 - True pointer stability
@@ -112,6 +113,15 @@ https://docs.google.com/spreadsheets/d/1TGnwxBs8PnPyuRr0EmKAldLRpga1lj_0ZiZVR6fz
 In general, expect this to be slower for iteration vs a sparse set, faster in iteration vs most or perhaps all other slot maps. Expect it to be faster for allocation compared to most slot maps, and expect it to be the fastest or near the fastest for insert and erase.
 In terms of lookups, it is direct, like most non sparse -> dense slot maps. In terms of validation for dead or occupied slots, it is a direct lookup and comparison, compared to a non O(1) scan for something like plf::colony.
 
+In general, this containers appears to be the fastest template container in the world when:
+- Data order doesn't matter
+- Churn through rate (insertions and deletions) are high, and may happen in moments of critical latency
+- References to non deleted elements must remain stable
+- Iteration happens frequently
+
+And as a bonus:
+- When handle validation needs to happen frequently
+
 ## API was Moved to github wiki
 
 ## Beginner API
@@ -129,24 +139,15 @@ Ignore the rest of the api.
 ## Rationale
 Alright, after writing all that out I think it's worth writing more to justify why this container exists.
 
-In terms of class, I position it as a competitor to sparse sets, that is, dense + sparse indirection arrays. And I position this in the same class as plf::colony.
+In terms of class, I position it as a competitor to sparse sets, that is, a dense array + a sparse indirection array. And I position this in the same class as plf::colony.
 Compared to a sparse set, this container should be faster in insert, erase, and lookups, and slower in iteration.
 
-I will go over the exact work done in the fastest hot paths now:
+Envision a scenario where one entity may hold a pointer to another in which it must lookup the position, and update it's own to follow. Either of these entities may be inserted or deleted at random, in large numbers.
+The entity being followed will be iterated through each frame, and at random it will either be deleted, or have it's position updated.
+Later, the entities that follow will be iterated through, and attempt to lookup their parents which they follow.
 
-Insert checks a free list member, which acts as an intrusive LIFO stack. It may pop off the stack, this requires a member write and memory read, no write. It then indexes into a bitset array and toggles a bit.
-Otherwise, it checks for growth and appends to the end of the container, incrementing two members.
+plf::colony fails here due to a lack of generations, a slot might be reused upon deletion and insertion, and a pointer that a follower holds would become stale but valid, causing a corruption of state.
+Aside from that, bitset_map would likely simply have better insertion, erasure, and iteration performance in this scenario.
 
-Back insert does not check for growth on the fastest path, it simply increments 2 members and constructs the element. No need to toggle bit on back append.
-
-Erase increments the generation of the slot in generational mode, destroys the element, writes the free list head into the slot, and sets the free list head as the slot index. It decrements a member and toggles a bit.
-
-Access is a direct base + index lookup.
-
-is_alive() is a direct bit lookup.
-
-is_generation() is a direct generation lookup, and comparison. Generation resides next to the payload, hopefully pulling it into the cache line on lookup.
-
-Because the container does not shrink, is_generation() is sufficient as a liveness check for any handle returned by the container. No need to check is_alive().
-
-Bitscan iteration reads words, uses _tzcnt_u64 to find a set bit corresponding to an element, and it skips empty 8 byte words.
+A sparse set with generations works here, but fails in performance due to several factors. The slower insertion speed, the slower erasure speed, and the double indirection on lookup for each follower entity.
+The sparse set iteration speed would be faster, but bitset_map can be comparable here.
