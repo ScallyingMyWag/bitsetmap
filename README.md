@@ -64,6 +64,14 @@ int main()
         element += i;
     }
 
+    // Or, alternatively
+    // visits all elements, use for_each, for_each_while, or erase_if
+    // Can cause the compiler to heavily flatten iteration code layout and can provide substantial performance improvement
+    slotMap.for_each([&element](int i)
+        {
+            element += i;
+        });
+
     // Erase
     slotMap.erase(h1);
 
@@ -110,10 +118,10 @@ The following benchmarks are not conclusive, consider them as if they only prove
 
 https://docs.google.com/spreadsheets/d/1TGnwxBs8PnPyuRr0EmKAldLRpga1lj_0ZiZVR6fzJsQ/edit?usp=sharing
 
-In general, expect this to be slower for iteration vs a sparse set, faster in iteration vs most or perhaps all other slot maps. Expect it to be faster for allocation compared to most slot maps, and expect it to be the fastest or near the fastest for insert and erase.
+In general, expect this to be slightly to moderately slower for iteration vs a sparse set, faster in iteration vs most or perhaps all other slot maps. Expect it to be faster for allocation compared to most slot maps, and expect it to be the fastest or near the fastest for insert and erase.
 In terms of lookups, it is direct, like most non sparse -> dense slot maps. In terms of validation for dead or occupied slots, it is a direct lookup and comparison, compared to a non O(1) scan for something like plf::colony.
 
-In general, this containers appears to be the fastest template container in the world when:
+In general, this container appears to be the fastest template container in the world when:
 - Data order doesn't matter
 - Churn through rate (insertions and deletions) are high, and may happen in moments of critical latency
 - References to non deleted elements must remain stable
