@@ -1028,7 +1028,7 @@ namespace scw
 
 				while (data != end_data) [[likely]]
 				{
-#ifdef __GNUC__ // test + jump can be up to ~23% faster than jumping on zero flag for whatever reason. MSVC is not smart enough to jump on zero flag. GCC uses the zf set by bslr which is slower than test
+#ifdef __GNUC__
 					if (word)
 					{
 						do
@@ -1181,6 +1181,156 @@ namespace scw
 		[[nodiscard]] const_iterator clast() const noexcept
 		{
 			return last();
+		}
+
+
+		template <class t_func>
+		void for_each_while(t_func p_func) noexcept
+		{
+			Node* data = m_data;
+			Node* const end_data = data + (m_high_water_mark & ~63U);
+			uint64_t* word_ptr = m_skip_data;
+			uint64_t word = *word_ptr;
+			uint64_t offset = 0ULL;
+			const uint64_t end_offset = static_cast<uint64_t>(m_high_water_mark & 63U);
+
+			while (data != end_data) [[likely]]
+			{
+#ifdef __GNUC__ // test + jump can be up to ~23% faster than jumping on zero flag for whatever reason. MSVC is not smart enough to jump on zero flag. GCC uses the zf set by bslr which is slower than test
+				if (word)
+				{
+					do
+					{
+						offset = _tzcnt_u64(word);
+						word = _blsr_u64(word);
+
+						if (!p_func(data[offset].value))
+						{
+							return;
+						}
+
+						bool test;
+						__asm__("test %1,%1" : "=@ccz"(test) : "r"(word));
+
+						if (test)
+						{
+							break;
+						}
+					} while (true);
+				}
+#else
+				while (word)
+				{
+					offset = _tzcnt_u64(word);
+					word = _blsr_u64(word);
+
+					if (!p_func(data[offset].value))
+					{
+						return;
+					}
+				}
+#endif
+				do
+				{
+					data += 64ULL;
+					++word_ptr;
+					word = *word_ptr;
+				} while (!word);
+			}
+
+			offset = _tzcnt_u64(word);
+
+			while (offset != end_offset)
+			{
+				if (!p_func(data[offset].value))
+				{
+					return;
+				}
+
+				word = _blsr_u64(word);
+				offset = _tzcnt_u64(word);
+			}
+		}
+
+
+		template <class t_func>
+		void for_each(t_func p_func) noexcept
+		{
+			for_each_while([&p_func](T& element) -> bool
+				{
+					p_func(element);
+
+					return true;
+				});
+		}
+
+
+		template <class t_func>
+		void erase_if(t_func p_func) noexcept
+		{
+			Node* data = m_data;
+			Node* const end_data = data + (m_high_water_mark & ~63U);
+			uint64_t* word_ptr = m_skip_data;
+			uint64_t word = *word_ptr;
+			uint64_t offset = 0ULL;
+			const uint64_t end_offset = static_cast<uint64_t>(m_high_water_mark & 63U);
+
+			while (data != end_data) [[likely]]
+			{
+#ifdef __GNUC__
+				if (word)
+				{
+					do
+					{
+						offset = _tzcnt_u64(word);
+						word = _blsr_u64(word);
+
+						if (p_func(data[offset].value))
+						{
+							erase(static_cast<uint32_t>(data - m_data + offset));
+						}
+
+						bool test;
+						__asm__("test %1,%1" : "=@ccz"(test) : "r"(word));
+
+						if (test)
+						{
+							break;
+						}
+					} while (true);
+				}
+#else
+				while (word)
+				{
+					offset = _tzcnt_u64(word);
+					word = _blsr_u64(word);
+
+					if (p_func(data[offset].value))
+					{
+						erase(static_cast<uint32_t>(data - m_data + offset));
+					}
+				}
+#endif
+				do
+				{
+					data += 64ULL;
+					++word_ptr;
+					word = *word_ptr;
+				} while (!word);
+			}
+
+			offset = _tzcnt_u64(word);
+
+			while (offset != end_offset)
+			{
+				if (p_func(data[offset].value))
+				{
+					erase(static_cast<uint32_t>(data - m_data + offset));
+				}
+
+				word = _blsr_u64(word);
+				offset = _tzcnt_u64(word);
+			}
 		}
 
 	private: // IMPLEMENTATION
