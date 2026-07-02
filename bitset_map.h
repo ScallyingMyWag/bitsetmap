@@ -14,6 +14,21 @@
 #include <immintrin.h>
 
 
+#if defined(__clang__)
+#define SCW_FORCE_INLINE [[clang::always_inline]]
+#define SCW_NO_INLINE [[clang::noinline]]
+#elif defined(__GNUC__)
+#define SCW_FORCE_INLINE [[gnu::always_inline]]
+#define SCW_NO_INLINE [[gnu::noinline]]
+#elif defined(_MSC_VER)
+#define SCW_FORCE_INLINE [[msvc::forceinline]]
+#define SCW_NO_INLINE [[msvc::noinline]]
+#else
+#define SCW_FORCE_INLINE
+#define SCW_NO_INLINE
+#endif
+
+
 namespace scw
 {
 	// CONCEPTS
@@ -21,8 +36,8 @@ namespace scw
 	struct no_generations {};
 	struct is_const {};
 	struct not_const {};
-	struct return_map {};
-	struct no_map {};
+	struct return_table {};
+	struct no_table {};
 
 
 	template<class T>
@@ -32,14 +47,14 @@ namespace scw
 	concept use_generations_concept = std::same_as<T, use_generations> || std::same_as<T, no_generations>;
 
 	template<class T>
-	concept return_remap_map_concept = std::same_as<T, return_map> || std::same_as<T, no_map>;
+	concept return_remap_table_concept = std::same_as<T, return_table> || std::same_as<T, no_table>;
 
 
 	template<class, uint32_t, use_generations_concept, const_iterator_concept>
 	class bitset_map_iterator;
 
 	template<class>
-	class remap_map;
+	class remap_table;
 
 
 	namespace platform
@@ -174,7 +189,7 @@ namespace scw
 		}
 
 
-		template <std::ranges::input_range t_range>
+		template<std::ranges::input_range t_range>
 		explicit bitset_map(t_range&& p_range)
 			requires (!std::derived_from<std::remove_cvref_t<t_range>, bitset_map>)
 		{
@@ -245,7 +260,7 @@ namespace scw
 		}
 
 
-		template <std::input_iterator t_iterator>
+		template<std::input_iterator t_iterator>
 		bitset_map(t_iterator p_first, t_iterator p_last)
 		{
 			constexpr static bool c_nothrow_constructible = std::is_nothrow_constructible_v<T, std::iter_reference_t<t_iterator>>;
@@ -458,6 +473,13 @@ namespace scw
 		}
 
 
+		void fill(uint32_t p_count, const T& p_value)
+			requires (std::is_nothrow_constructible_v<T, const T&>)
+		{
+			fill_slots_(p_count, p_value);
+		}
+
+
 		void erase(uint32_t p_index) noexcept
 		{
 			destroy_element_(p_index);
@@ -549,6 +571,13 @@ namespace scw
 		}
 
 
+		void erase_chunk(uint32_t p_index, uint64_t p_mask) noexcept
+			requires (!c_generational && std::is_trivially_copyable_v<T>)
+		{
+			destroy_chunk_(p_index, p_mask);
+		}
+
+
 		// HELPERS
 		[[nodiscard]] T& at(uint32_t p_index) noexcept
 		{
@@ -623,7 +652,7 @@ namespace scw
 
 
 		[[nodiscard]] T* try_at(handle p_handle) noexcept
-			requires c_generational
+			requires (c_generational)
 		{
 			return try_at(p_handle.index, p_handle.generation);
 		}
@@ -637,7 +666,7 @@ namespace scw
 
 
 		[[nodiscard]] const T* try_at(handle p_handle) const noexcept
-			requires c_generational
+			requires (c_generational)
 		{
 			return try_at(p_handle.index, p_handle.generation);
 		}
@@ -722,14 +751,14 @@ namespace scw
 
 
 		[[nodiscard]] bool is_generation(uint32_t p_index, uint32_t p_generation) const noexcept
-			requires c_generational
+			requires (c_generational)
 		{
 			return m_data[p_index].generation == p_generation;
 		}
 
 
 		[[nodiscard]] bool is_generation(handle p_handle) const noexcept
-			requires c_generational
+			requires (c_generational)
 		{
 			return is_generation(p_handle.index, p_handle.generation);
 		}
@@ -737,35 +766,35 @@ namespace scw
 
 		template<std::same_as<T*> ptr>
 		[[nodiscard]] bool is_generation(ptr p_element, uint32_t p_generation) const noexcept
-			requires c_generational
+			requires (c_generational)
 		{
 			return reinterpret_cast<Node*>(reinterpret_cast<char*>(p_element) - offsetof(Node, value))->generation == p_generation;
 		}
 
 
 		[[nodiscard]] uint32_t& get_generation(uint32_t p_index) noexcept
-			requires c_generational
+			requires (c_generational)
 		{
 			return m_data[p_index].generation;
 		}
 
 
 		[[nodiscard]] const uint32_t& get_generation(const uint32_t p_index) const noexcept
-			requires c_generational
+			requires (c_generational)
 		{
 			return m_data[p_index].generation;
 		}
 
 
 		[[nodiscard]] uint32_t& get_generation(handle p_handle) noexcept
-			requires c_generational
+			requires (c_generational)
 		{
 			return get_generation(p_handle.index);
 		}
 
 
 		[[nodiscard]] const uint32_t& get_generation(const handle p_handle) const noexcept
-			requires c_generational
+			requires (c_generational)
 		{
 			return get_generation(p_handle.index);
 		}
@@ -773,7 +802,7 @@ namespace scw
 
 		template<std::same_as<T*> ptr>
 		[[nodiscard]] uint32_t& get_generation(ptr p_element) noexcept
-			requires c_generational
+			requires (c_generational)
 		{
 			return get_generation(index_of_(p_element));
 		}
@@ -781,7 +810,7 @@ namespace scw
 
 		template<std::same_as<const T*> ptr>
 		[[nodiscard]] const uint32_t& get_generation(ptr p_element) const noexcept
-			requires c_generational
+			requires (c_generational)
 		{
 			return get_generation(index_of_(p_element));
 		}
@@ -789,7 +818,7 @@ namespace scw
 
 		template<class t_iterator>
 		[[nodiscard]] uint32_t& get_generation(const t_iterator& p_iterator) noexcept
-			requires c_generational
+			requires (c_generational)
 		{
 			return p_iterator.m_data[p_iterator.m_skip_offset + p_iterator.m_offset].generation;
 		}
@@ -797,7 +826,7 @@ namespace scw
 
 		template<class t_iterator>
 		[[nodiscard]] const uint32_t& get_generation(const t_iterator& p_iterator) const noexcept
-			requires c_generational
+			requires (c_generational)
 		{
 			return p_iterator.m_data[p_iterator.m_skip_offset + p_iterator.m_offset].generation;
 		}
@@ -812,6 +841,25 @@ namespace scw
 		[[nodiscard]] uint32_t size() const noexcept
 		{
 			return m_size;
+		}
+
+
+		[[nodiscard]] uint32_t chunk_count() const noexcept
+		{
+			return m_high_water_mark >> 6U;
+		}
+
+
+		[[nodiscard]] T* get_chunk(uint32_t p_index) noexcept
+			requires (!c_generational && std::is_trivially_copyable_v<T>)
+		{
+			return reinterpret_cast<T*>(m_data + p_index);
+		}
+
+
+		[[nodiscard]] uint64_t get_bitmask(uint32_t p_index) const noexcept
+		{
+			return m_skip_data[p_index];
 		}
 
 		// to push using unckecked insertion functions
@@ -850,21 +898,17 @@ namespace scw
 
 
 		// Intended to break pointer stability
-		template<return_remap_map_concept t_return_map = return_map, class Allocator = std::allocator<uint32_t>>
-		std::conditional_t<std::same_as<t_return_map, return_map>, remap_map<Allocator>, no_map> compress()
-			requires std::is_nothrow_move_constructible_v<T>
+		template<return_remap_table_concept t_return_table = return_table, class Allocator = std::allocator<uint32_t>>
+		std::conditional_t<std::same_as<t_return_table, return_table>, remap_table<Allocator>, no_table> compress()
+			requires (std::is_nothrow_move_constructible_v<T>)
 		{
-			static constexpr bool c_return_map = std::same_as<t_return_map, return_map>;
-			std::conditional_t<c_return_map, remap_map<Allocator>, no_map> map;
-
-			uint32_t last_index = 0U;
+			static constexpr bool c_return_table = std::same_as<t_return_table, return_table>;
+			std::conditional_t<c_return_table, remap_table<Allocator>, no_table> table;
 
 			if (m_size)
 			{
 				const uint32_t max_index = m_size - 1U;
 				const uint32_t max_word_index = m_size - 1U >> 6U;
-				const const_iterator last_iterator = clast();
-				last_index = last_iterator.m_skip_offset + last_iterator.m_offset;
 
 				uint32_t elements_to_move = 0U;
 
@@ -874,20 +918,13 @@ namespace scw
 				}
 
 				const uint64_t shift_amount = _andn_u64(static_cast<uint64_t>(max_index), 63ULL);
-				elements_to_move += 64ULL - _mm_popcnt_u64(m_skip_data[max_word_index] & UINT64_MAX >> shift_amount) - shift_amount;
+				elements_to_move += static_cast<uint32_t>(64ULL - _mm_popcnt_u64(m_skip_data[max_word_index] & UINT64_MAX >> shift_amount) - shift_amount);
 
 				if (elements_to_move)
 				{
-					if constexpr (c_return_map)
+					if constexpr (c_return_table)
 					{
-						size_t pow_2_elements_to_move = std::bit_ceil(elements_to_move);
-
-						if (static_cast<float>(elements_to_move) / static_cast<float>(pow_2_elements_to_move) > 0.6f)
-						{
-							pow_2_elements_to_move <<= 1ULL;
-						}
-
-						map.allocate(pow_2_elements_to_move);
+						table.allocate(m_high_water_mark - m_size, m_size);
 					}
 
 					Node* hole_data = m_data;
@@ -938,9 +975,9 @@ namespace scw
 							element_data[element_offset].value.~T();
 						}
 
-						if constexpr (c_return_map)
+						if constexpr (c_return_table)
 						{
-							map.insert(element_index + element_offset, hole_index + hole_offset);
+							table.insert(element_index + element_offset, hole_index + hole_offset);
 						}
 
 						--elements_to_move;
@@ -951,7 +988,7 @@ namespace scw
 			}
 			else
 			{
-				decommit_pages_(last_index);
+				decommit_pages_(0U);
 			}
 
 			m_free_list = UINT32_MAX;
@@ -964,7 +1001,7 @@ namespace scw
 
 			memset(m_skip_data, 0xFF, get_skip_bytes_for_element_count_(m_capacity));
 
-			return map;
+			return table;
 		}
 
 		// sets all m_skip_data bits past high water mark
@@ -1184,7 +1221,23 @@ namespace scw
 		}
 
 
-		template <class t_func>
+		[[nodiscard]] iterator get_iterator_from_chunk_index(uint32_t p_index) noexcept
+		{
+			iterator to_return(m_data, m_skip_data, m_skip_data[p_index] & UINT64_MAX << 1ULL, p_index << 6U, 0U);
+
+			return m_skip_data[p_index] & 1ULL ? to_return : ++to_return;
+		}
+
+
+		[[nodiscard]] const_iterator get_iterator_from_chunk_index(uint32_t p_index) const noexcept
+		{
+			const_iterator to_return(m_data, m_skip_data, m_skip_data[p_index] & UINT64_MAX << 1ULL, p_index << 6U, 0U);
+
+			return m_skip_data[p_index] & 1ULL ? to_return : ++to_return;
+		}
+
+
+		template<class t_func>
 		void for_each_while(t_func p_func) noexcept
 		{
 			Node* data = m_data;
@@ -1253,7 +1306,7 @@ namespace scw
 		}
 
 
-		template <class t_func>
+		template<class t_func>
 		void for_each(t_func p_func) noexcept
 		{
 			for_each_while([&p_func](T& element) -> bool
@@ -1265,7 +1318,7 @@ namespace scw
 		}
 
 
-		template <class t_func>
+		template<class t_func>
 		void erase_if(t_func p_func) noexcept
 		{
 			Node* data = m_data;
@@ -1335,7 +1388,7 @@ namespace scw
 
 	private: // IMPLEMENTATION
 		// VM reservation split between three memory blocks here
-		void allocate_(uint32_t p_reserve_count)
+		SCW_NO_INLINE void allocate_(uint32_t p_reserve_count)
 		{
 			constexpr static size_t aligned_data_bytes = align_(get_bytes_for_element_count_(t_VM_reserve_elements), alignof(uint64_t));
 			constexpr static size_t aligned_skip_array_bytes = align_(get_skip_bytes_for_element_count_(t_VM_reserve_elements), alignof(uint64_t*));
@@ -1486,7 +1539,7 @@ namespace scw
 		}
 
 		// grow intended to silently fail when full
-		void grow_(uint32_t p_elements_to_commit)
+		SCW_NO_INLINE void grow_(uint32_t p_elements_to_commit)
 		{
 			const size_t old_bytes = get_bytes_for_element_count_(m_capacity);
 			const size_t old_skip_bytes = get_skip_bytes_for_element_count_(m_capacity);
@@ -1529,7 +1582,7 @@ namespace scw
 
 		// here, dependency of the not on word doesn't seem to matter, nor does the word load. Compiler seems to cache word here when insert is called in a loop
 		// chunked free list here increases latency, but reduces memory accesses drastically and removes read before write dependency, making effective latency less compared to intrusive free list
-		[[nodiscard]] uint32_t get_allocation_slot_()
+		SCW_FORCE_INLINE [[nodiscard]] uint32_t get_allocation_slot_()
 		{
 			if (m_free_list != UINT32_MAX)
 			{
@@ -1565,7 +1618,7 @@ namespace scw
 		}
 
 
-		[[nodiscard]] uint32_t get_end_allocation_slot_()
+		SCW_FORCE_INLINE [[nodiscard]] uint32_t get_end_allocation_slot_()
 		{
 			const uint32_t slot = m_high_water_mark;
 
@@ -1581,7 +1634,7 @@ namespace scw
 		}
 
 
-		[[nodiscard]] uint32_t get_unchecked_allocation_slot_() noexcept
+		SCW_FORCE_INLINE [[nodiscard]] uint32_t get_unchecked_allocation_slot_() noexcept
 		{
 			const uint32_t slot = m_high_water_mark;
 
@@ -1592,9 +1645,54 @@ namespace scw
 		}
 
 
+		SCW_FORCE_INLINE void fill_slots_(uint32_t p_count, const T& p_value)
+		{
+			m_size += p_count;
+
+			while (m_free_list != UINT32_MAX)
+			{
+				uint64_t word = ~m_skip_data[m_free_list];
+
+				const uint64_t scaled_index = static_cast<uint64_t>(m_free_list) << 6ULL;
+				const uint32_t free_slots = static_cast<uint32_t>(_mm_popcnt_u64(word));
+
+				for (uint32_t count = 0U; count < free_slots && count < p_count; ++count)
+				{
+					const uint64_t offset = _tzcnt_u64(word);
+					construct_in_slot_(static_cast<uint32_t>(scaled_index + offset), p_value);
+					word = _blsr_u64(word);
+				}
+
+				m_skip_data[m_free_list] = ~word;
+
+				if (!word)
+				{
+					m_free_list = m_free_table[m_free_list];
+				}
+				else
+				{
+					return;
+				}
+
+				p_count -= free_slots;
+			}
+
+			if (m_high_water_mark + p_count >= m_capacity)
+			{
+				grow_(m_high_water_mark + p_count - m_capacity);
+			}
+
+			for (uint32_t count = 0U; count < p_count; ++count)
+			{
+				construct_in_slot_(m_high_water_mark, p_value);
+				++m_high_water_mark;
+			}
+		}
+
+
 		template<class... Args>
-		[[nodiscard]] handle construct_in_slot_(uint32_t p_slot, Args&&... p_args) noexcept
-			requires std::is_nothrow_constructible_v<T, Args...>
+		SCW_FORCE_INLINE handle construct_in_slot_(uint32_t p_slot, Args&&... p_args) noexcept
+			requires (std::is_nothrow_constructible_v<T, Args...>)
 		{
 			::new(&m_data[p_slot].value) T(std::forward<Args>(p_args)...);
 
@@ -1610,7 +1708,7 @@ namespace scw
 
 		// rollback can be calculated from p_slot here, free table is not overwritten so that's fine
 		template<class... Args>
-		[[nodiscard]] handle construct_in_slot_(uint32_t p_slot, uint32_t p_high_water_mark, Args&&... p_args)
+		SCW_FORCE_INLINE [[nodiscard]] handle construct_in_slot_(uint32_t p_slot, uint32_t p_high_water_mark, Args&&... p_args)
 		{
 			try
 			{
@@ -1645,7 +1743,7 @@ namespace scw
 
 		// compared to a per element intrusive free list, this design is slower computationally but reduces memory accesses drastically
 		// should be slightly slower in hot cache and much faster when not hot in cache
-		void destroy_element_(uint32_t p_index) noexcept
+		SCW_FORCE_INLINE void destroy_element_(uint32_t p_index) noexcept
 		{
 			const uint32_t chunk_index = p_index >> 6U;
 			const uint64_t word = m_skip_data[chunk_index];
@@ -1671,8 +1769,24 @@ namespace scw
 			}
 		}
 
+
+		SCW_FORCE_INLINE void destroy_chunk_(uint32_t p_index, uint64_t p_mask) noexcept
+		{
+			const uint64_t word = m_skip_data[p_index];
+
+			m_size -= _mm_popcnt_u64(p_mask);
+
+			m_skip_data[p_index] = _andn_u64(p_mask, word);
+
+			if (word == UINT64_MAX) [[unlikely]]
+			{
+				::new(m_free_table + p_index) uint32_t(m_free_list);
+				m_free_list = p_index;
+			}
+		}
+
 		// decommits physical memory, making sure not to decommit page when one memory block bleeds into the page of another
-		void decommit_pages_(uint32_t p_index) noexcept
+		SCW_NO_INLINE void decommit_pages_(uint32_t p_index) noexcept
 		{
 			const size_t bytes_occupied = align_(static_cast<size_t>(p_index + 1U) * sizeof(Node), platform::OS_PAGE_SIZE);
 			const size_t bytes_comitted = align_(m_capacity * sizeof(Node), platform::OS_PAGE_SIZE);
@@ -1722,7 +1836,7 @@ namespace scw
 				}
 			}
 
-			m_capacity = static_cast<uint32_t>(bytes_occupied / sizeof(Node));
+			m_capacity = std::min(t_VM_reserve_elements, static_cast<uint32_t>(bytes_occupied / sizeof(Node)));
 		}
 
 		// helpers
@@ -1899,45 +2013,34 @@ namespace scw
 
 
 
-	// REMAP MAP, simplified, never needs to grow or make checks
+	// REMAP TABLE, simplified, never needs to grow or make checks
 	template<class Allocator>
-	class remap_map
+	class remap_table
 	{
 	private:
-		struct RemapNode
-		{
-			int32_t psl = -1;
-			uint32_t key = 0U;
-			uint32_t value = 0U;
+		remap_table() noexcept = default;
 
-			[[nodiscard]] bool is_empty() const noexcept { return psl == -1; };
-		};
-
-	private:
-		using NodeAllocator = typename std::allocator_traits<Allocator>::template rebind_alloc<RemapNode>;
-
-	private:
-		remap_map() noexcept = default;
-
-		remap_map(const Allocator& p_alloc) noexcept : m_state(p_alloc) {}
+		remap_table(const Allocator& p_alloc) noexcept : m_state(p_alloc) {}
 
 	public:
-		remap_map(const remap_map& p_other) : m_state(p_other.m_state)
+		remap_table(const remap_table& p_other) : m_state(p_other.m_state)
 		{
 			m_state.data = m_state.allocate(m_state.size);
-			memcpy(m_state.data, p_other.m_state.data, m_state.size * sizeof(RemapNode));
+			m_state.offset_data = m_state.data - (p_other.m_state.data - p_other.m_state.offset_data);
+			memcpy(m_state.data, p_other.m_state.data, m_state.size * sizeof(uint32_t));
 		}
 
 
-		remap_map& operator=(const remap_map& p_other)
+		remap_table& operator=(const remap_table& p_other)
 		{
 			if (this != &p_other)
 			{
 				CompressedState new_state = p_other.m_state;
 				new_state.data = new_state.allocate(new_state.size);
+				new_state.offset_data = new_state.data - (p_other.m_state.data - p_other.m_state.offset_data);
 
 				m_state.deallocate(m_state.data, m_state.size);
-				memcpy(new_state.data, p_other.m_state.data, new_state.size * sizeof(RemapNode));
+				memcpy(new_state.data, p_other.m_state.data, new_state.size * sizeof(uint32_t));
 
 				m_state = std::move(new_state);
 			}
@@ -1946,14 +2049,15 @@ namespace scw
 		}
 
 
-		remap_map(remap_map&& p_other) noexcept : m_state(std::move(p_other.m_state))
+		remap_table(remap_table&& p_other) noexcept : m_state(std::move(p_other.m_state))
 		{
 			p_other.m_state.data = nullptr;
+			p_other.m_state.offset_data = nullptr;
 			p_other.m_state.size = 0ULL;
 		}
 
 
-		remap_map& operator=(remap_map&& p_other) noexcept
+		remap_table& operator=(remap_table&& p_other) noexcept
 		{
 			if (this != &p_other)
 			{
@@ -1962,6 +2066,7 @@ namespace scw
 				m_state = std::move(p_other.m_state);
 
 				p_other.m_state.data = nullptr;
+				p_other.m_state.offset_data = nullptr;
 				p_other.m_state.size = 0ULL;
 			}
 
@@ -1969,7 +2074,7 @@ namespace scw
 		}
 
 
-		~remap_map() noexcept
+		~remap_table() noexcept
 		{
 			if (m_state.data)
 			{
@@ -1978,79 +2083,24 @@ namespace scw
 		}
 
 	private:
-		void allocate(size_t p_element_count)
+		void allocate(size_t p_element_count, size_t p_offset)
 		{
 			m_state.size = p_element_count;
 
 			m_state.data = m_state.allocate(m_state.size);
-
-			for (size_t index = 0ULL; index != m_state.size; ++index)
-			{
-				m_state.data[index] = RemapNode();
-			}
+			m_state.offset_data = m_state.data - p_offset;
 		}
 
 
-		void insert(uint32_t p_key, uint32_t p_value) noexcept
+		void insert(uint32_t p_old_handle, uint32_t p_new_handle) noexcept
 		{
-			size_t index = std::hash<uint32_t>()(p_key) & (m_state.size - 1ULL);
-			int32_t psl = 0;
-
-			while (true)
-			{
-				if (m_state.data[index].is_empty())
-				{
-					m_state.data[index].psl = psl;
-					m_state.data[index].key = p_key;
-					m_state.data[index].value = p_value;
-
-					return;
-				}
-				else if (psl > m_state.data[index].psl)
-				{
-					std::swap(psl, m_state.data[index].psl);
-					std::swap(p_key, m_state.data[index].key);
-					std::swap(p_value, m_state.data[index].value);
-				}
-
-				++psl;
-				++index;
-
-				if (index == m_state.size)
-				{
-					index = 0ULL;
-				}
-			}
+			m_state.offset_data[p_old_handle] = p_new_handle;
 		}
 
 	public:
-		[[nodiscard]] uint32_t find(uint32_t p_key) const noexcept
+		[[nodiscard]] uint32_t find(uint32_t p_old_handle) const noexcept
 		{
-			const size_t start = std::hash<uint32_t>()(p_key) & (m_state.size - 1ULL);
-			size_t index = start;
-			int32_t psl = 0;
-
-			while (p_key != m_state.data[index].key)
-			{
-				if (psl > m_state.data[index].psl)
-				{
-					return p_key;
-				}
-
-				++psl;
-				++index;
-
-				if (index == m_state.size)
-				{
-					index = 0ULL;
-				}
-				if (index == start)
-				{
-					return p_key;
-				}
-			}
-
-			return m_state.data[index].value;
+			return m_state.offset_data[p_old_handle];
 		}
 
 
@@ -2064,9 +2114,10 @@ namespace scw
 		friend class bitset_map;
 
 
-		struct CompressedState : public NodeAllocator
+		struct CompressedState : public Allocator
 		{
-			RemapNode* data = nullptr;
+			uint32_t* data = nullptr;
+			uint32_t* offset_data = nullptr;
 			size_t size = 0ULL;
 		};
 
