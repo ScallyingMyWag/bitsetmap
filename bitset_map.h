@@ -59,7 +59,7 @@ namespace scw
 
 	namespace platform
 	{
-		inline size_t OS_PAGE_SIZE;
+		inline size_t os_page_size;
 
 
 		size_t get_page_size() noexcept;
@@ -71,9 +71,9 @@ namespace scw
 
 		[[nodiscard]] inline bool query_system_page_info()
 		{
-			OS_PAGE_SIZE = get_page_size();
+			os_page_size = get_page_size();
 
-			if (OS_PAGE_SIZE & (OS_PAGE_SIZE - 1ULL))
+			if (os_page_size & os_page_size - 1ULL)
 			{
 				throw std::bad_alloc();
 			}
@@ -91,12 +91,12 @@ namespace scw
 
 
 	// BITSET MAP
-	template<class T, uint32_t t_VM_reserve_elements, use_generations_concept t_use_generations = no_generations>
+	template<class T, uint32_t t_vm_reserve_elements, use_generations_concept t_use_generations = no_generations>
 	class bitset_map
 	{
 	private:
 		static_assert(std::is_nothrow_destructible_v<T>, "scw::bitset_map requires T to be nothrow destructible");
-		static_assert(t_VM_reserve_elements&& t_VM_reserve_elements < UINT32_MAX, "scw::bitset_map requires reserve size to be between 1 and uint32_t max - 1");
+		static_assert(t_vm_reserve_elements&& t_vm_reserve_elements < UINT32_MAX, "scw::bitset_map requires reserve size to be between 1 and uint32_t max - 1");
 
 	private: // TYPES
 		struct IndividualisticNode
@@ -129,15 +129,15 @@ namespace scw
 		friend class bitset_map_iterator;
 
 
-		constexpr inline static bool c_generational = std::same_as<t_use_generations, use_generations>;
+		constexpr static bool c_generational = std::same_as<t_use_generations, use_generations>;
 
 
-		using Node = std::conditional_t<c_generational, GenerationalNode, IndividualisticNode>;
+		using node = std::conditional_t<c_generational, GenerationalNode, IndividualisticNode>;
 
 	public:
 		using handle = std::conditional_t<c_generational, GenerationalHandle, IndividualisticHandle>;
-		using iterator = bitset_map_iterator<T, t_VM_reserve_elements, t_use_generations, not_const>;
-		using const_iterator = bitset_map_iterator<T, t_VM_reserve_elements, t_use_generations, is_const>;
+		using iterator = bitset_map_iterator<T, t_vm_reserve_elements, t_use_generations, not_const>;
+		using const_iterator = bitset_map_iterator<T, t_vm_reserve_elements, t_use_generations, is_const>;
 
 	public: // CONSTRUCTORS
 		bitset_map()
@@ -492,8 +492,8 @@ namespace scw
 		}
 
 
-		template<std::same_as<T*> ptr>
-		void erase(ptr p_element) noexcept
+		template<std::same_as<T*> t_pointer>
+		void erase(t_pointer p_element) noexcept
 		{
 			erase(index_of_(p_element));
 		}
@@ -555,16 +555,16 @@ namespace scw
 		}
 
 
-		template<std::same_as<T*> ptr>
-		void try_erase(ptr p_element, uint32_t p_generation) noexcept
+		template<std::same_as<T*> t_pointer>
+		void try_erase(t_pointer p_element, uint32_t p_generation) noexcept
 			requires (c_generational)
 		{
 			try_erase(index_of_(p_element), p_generation);
 		}
 
 
-		template<std::same_as<T*> ptr>
-		void try_erase(ptr p_element) noexcept
+		template<std::same_as<T*> t_pointer>
+		void try_erase(t_pointer p_element) noexcept
 			requires (!c_generational)
 		{
 			try_erase(index_of_(p_element));
@@ -679,8 +679,8 @@ namespace scw
 		}
 
 
-		template<std::same_as<T*> ptr>
-		[[nodiscard]] T* try_at(ptr p_element, uint32_t p_generation) noexcept
+		template<std::same_as<T*> t_pointer>
+		[[nodiscard]] T* try_at(t_pointer p_element, uint32_t p_generation) noexcept
 			requires (c_generational)
 		{
 			if (is_generation(p_element, p_generation))
@@ -692,8 +692,8 @@ namespace scw
 		}
 
 
-		template<std::same_as<T*> ptr>
-		[[nodiscard]] T* try_at(ptr p_element) noexcept
+		template<std::same_as<T*> t_pointer>
+		[[nodiscard]] T* try_at(t_pointer p_element) noexcept
 			requires (!c_generational)
 		{
 			if (is_alive(p_element))
@@ -705,8 +705,8 @@ namespace scw
 		}
 
 
-		template<std::same_as<const T*> ptr>
-		[[nodiscard]] const T* try_at(ptr p_element, uint32_t p_generation) const noexcept
+		template<std::same_as<const T*> t_pointer>
+		[[nodiscard]] const T* try_at(t_pointer p_element, uint32_t p_generation) const noexcept
 			requires (c_generational)
 		{
 			if (is_generation(p_element, p_generation))
@@ -718,8 +718,8 @@ namespace scw
 		}
 
 
-		template<std::same_as<const T*> ptr>
-		[[nodiscard]] const T* try_at(ptr p_element) const noexcept
+		template<std::same_as<const T*> t_pointer>
+		[[nodiscard]] const T* try_at(t_pointer p_element) const noexcept
 			requires (!c_generational)
 		{
 			if (is_alive(p_element))
@@ -743,8 +743,8 @@ namespace scw
 		}
 
 
-		template<std::same_as<T*> ptr>
-		[[nodiscard]] bool is_alive(ptr p_element) const noexcept
+		template<std::same_as<T*> t_pointer>
+		[[nodiscard]] bool is_alive(t_pointer p_element) const noexcept
 		{
 			return is_alive(index_of_(p_element));
 		}
@@ -764,11 +764,11 @@ namespace scw
 		}
 
 
-		template<std::same_as<T*> ptr>
-		[[nodiscard]] bool is_generation(ptr p_element, uint32_t p_generation) const noexcept
+		template<std::same_as<T*> t_pointer>
+		[[nodiscard]] bool is_generation(t_pointer p_element, uint32_t p_generation) const noexcept
 			requires (c_generational)
 		{
-			return reinterpret_cast<Node*>(reinterpret_cast<char*>(p_element) - offsetof(Node, value))->generation == p_generation;
+			return reinterpret_cast<node*>(reinterpret_cast<char*>(p_element) - offsetof(node, value))->generation == p_generation;
 		}
 
 
@@ -779,7 +779,7 @@ namespace scw
 		}
 
 
-		[[nodiscard]] const uint32_t& get_generation(const uint32_t p_index) const noexcept
+		[[nodiscard]] const uint32_t& get_generation(uint32_t p_index) const noexcept
 			requires (c_generational)
 		{
 			return m_data[p_index].generation;
@@ -793,23 +793,23 @@ namespace scw
 		}
 
 
-		[[nodiscard]] const uint32_t& get_generation(const handle p_handle) const noexcept
+		[[nodiscard]] const uint32_t& get_generation(handle p_handle) const noexcept
 			requires (c_generational)
 		{
 			return get_generation(p_handle.index);
 		}
 
 
-		template<std::same_as<T*> ptr>
-		[[nodiscard]] uint32_t& get_generation(ptr p_element) noexcept
+		template<std::same_as<T*> t_pointer>
+		[[nodiscard]] uint32_t& get_generation(t_pointer p_element) noexcept
 			requires (c_generational)
 		{
 			return get_generation(index_of_(p_element));
 		}
 
 
-		template<std::same_as<const T*> ptr>
-		[[nodiscard]] const uint32_t& get_generation(ptr p_element) const noexcept
+		template<std::same_as<const T*> t_pointer>
+		[[nodiscard]] const uint32_t& get_generation(t_pointer p_element) const noexcept
 			requires (c_generational)
 		{
 			return get_generation(index_of_(p_element));
@@ -902,7 +902,7 @@ namespace scw
 		std::conditional_t<std::same_as<t_return_table, return_table>, remap_table<Allocator>, no_table> compress()
 			requires (std::is_nothrow_move_constructible_v<T>)
 		{
-			static constexpr bool c_return_table = std::same_as<t_return_table, return_table>;
+			constexpr static bool c_return_table = std::same_as<t_return_table, return_table>;
 			std::conditional_t<c_return_table, remap_table<Allocator>, no_table> table;
 
 			if (m_size)
@@ -924,18 +924,18 @@ namespace scw
 				{
 					if constexpr (c_return_table)
 					{
-						table.allocate(m_high_water_mark - m_size, m_size);
+						table.allocate_(m_high_water_mark - m_size, m_size);
 					}
 
-					Node* hole_data = m_data;
+					node* hole_data = m_data;
 					uint64_t* hole_skip_data = m_skip_data;
 					uint64_t current_holes_word = ~*hole_skip_data;
 					uint32_t hole_index = 0U;
 					uint32_t hole_offset = 0U;
 
-					Node* element_data = m_data + (m_size & ~63U);
+					node* element_data = m_data + (m_size & ~63U);
 					uint64_t* element_skip_data = m_skip_data + (m_size >> 6U);
-					uint64_t current_elements_word = *element_skip_data & UINT64_MAX << (m_size & 63U);
+					uint64_t current_elements_word = *element_skip_data & UINT64_MAX << static_cast<uint64_t>(m_size & 63U);
 					uint32_t element_offset = 0U;
 					uint32_t element_index = m_size & ~63U;
 
@@ -977,7 +977,7 @@ namespace scw
 
 						if constexpr (c_return_table)
 						{
-							table.insert(element_index + element_offset, hole_index + hole_offset);
+							table.insert_(element_index + element_offset, hole_index + hole_offset);
 						}
 
 						--elements_to_move;
@@ -996,10 +996,10 @@ namespace scw
 
 			if constexpr (c_generational)
 			{
-				memset(m_data + m_high_water_mark, 0, static_cast<size_t>(m_capacity - m_high_water_mark) * sizeof(Node));
+				memset(m_data + m_high_water_mark, 0, static_cast<size_t>(m_capacity - m_high_water_mark) * sizeof(node));
 			}
 
-			memset(m_skip_data, 0xFF, get_skip_bytes_for_element_count_(m_capacity));
+			memset(m_skip_data, 0xFFFFFFFF, get_skip_bytes_for_element_count_(m_capacity));
 
 			return table;
 		}
@@ -1020,12 +1020,12 @@ namespace scw
 
 				if constexpr (c_generational)
 				{
-					memset(m_data + m_high_water_mark, 0, static_cast<size_t>(m_capacity - m_high_water_mark) * sizeof(Node));
+					memset(m_data + m_high_water_mark, 0, static_cast<size_t>(m_capacity - m_high_water_mark) * sizeof(node));
 				}
 
 				m_skip_data[m_high_water_mark >> 6U] |= UINT64_MAX << static_cast<uint64_t>(m_high_water_mark & 63U);
 				const size_t bytes_to_reset = get_skip_bytes_for_element_count_(m_capacity) - (static_cast<size_t>(m_high_water_mark >> 6U) + 1ULL) * sizeof(uint64_t);
-				memset(m_skip_data + (m_high_water_mark >> 6U) + 1ULL, 0xFF, bytes_to_reset);
+				memset(m_skip_data + (m_high_water_mark >> 6U) + 1ULL, 0xFFFFFFFF, bytes_to_reset);
 
 				uint32_t new_free_list_index = UINT32_MAX;
 
@@ -1045,7 +1045,7 @@ namespace scw
 
 			decommit_pages_(index);
 
-			memset(m_skip_data, 0xFF, get_skip_bytes_for_element_count_(m_capacity));
+			memset(m_skip_data, 0xFFFFFFFF, get_skip_bytes_for_element_count_(m_capacity));
 
 			m_free_list = UINT32_MAX;
 			m_high_water_mark = 0U;
@@ -1056,10 +1056,10 @@ namespace scw
 		{
 			if constexpr (c_generational || !std::is_trivially_destructible_v<T>)
 			{
-				Node* data = m_data;
-				Node* const end_data = data + (m_high_water_mark & ~63U);
-				uint64_t* word_ptr = m_skip_data;
-				uint64_t word = *word_ptr;
+				node* data = m_data;
+				node* const end_data = data + (m_high_water_mark & ~63U);
+				uint64_t* word_pointer = m_skip_data;
+				uint64_t word = *word_pointer;
 				uint64_t offset = 0ULL;
 				const uint64_t end_offset = static_cast<uint64_t>(m_high_water_mark & 63U);
 
@@ -1112,8 +1112,8 @@ namespace scw
 					do
 					{
 						data += 64ULL;
-						++word_ptr;
-						word = *word_ptr;
+						++word_pointer;
+						word = *word_pointer;
 					} while (!word);
 				}
 
@@ -1136,7 +1136,7 @@ namespace scw
 				}
 			}
 
-			memset(m_skip_data, 0xFF, static_cast<size_t>((m_high_water_mark >> 6U) + 1U) * sizeof(uint64_t));
+			memset(m_skip_data, 0xFFFFFFFF, static_cast<size_t>((m_high_water_mark >> 6U) + 1U) * sizeof(uint64_t));
 
 			m_free_list = UINT32_MAX;
 			m_high_water_mark = 0U;
@@ -1240,10 +1240,10 @@ namespace scw
 		template<class t_func>
 		void for_each_while(t_func p_func) noexcept
 		{
-			Node* data = m_data;
-			Node* const end_data = data + (m_high_water_mark & ~63U);
-			uint64_t* word_ptr = m_skip_data;
-			uint64_t word = *word_ptr;
+			node* data = m_data;
+			node* const end_data = data + (m_high_water_mark & ~63U);
+			uint64_t* word_pointer = m_skip_data;
+			uint64_t word = *word_pointer;
 			uint64_t offset = 0ULL;
 			const uint64_t end_offset = static_cast<uint64_t>(m_high_water_mark & 63U);
 
@@ -1286,8 +1286,8 @@ namespace scw
 				do
 				{
 					data += 64ULL;
-					++word_ptr;
-					word = *word_ptr;
+					++word_pointer;
+					word = *word_pointer;
 				} while (!word);
 			}
 
@@ -1309,9 +1309,9 @@ namespace scw
 		template<class t_func>
 		void for_each(t_func p_func) noexcept
 		{
-			for_each_while([&p_func](T& element) -> bool
+			for_each_while([&p_func](T& p_element) -> bool
 				{
-					p_func(element);
+					p_func(p_element);
 
 					return true;
 				});
@@ -1321,10 +1321,10 @@ namespace scw
 		template<class t_func>
 		void erase_if(t_func p_func) noexcept
 		{
-			Node* data = m_data;
-			Node* const end_data = data + (m_high_water_mark & ~63U);
-			uint64_t* word_ptr = m_skip_data;
-			uint64_t word = *word_ptr;
+			node* data = m_data;
+			node* const end_data = data + (m_high_water_mark & ~63U);
+			uint64_t* word_pointer = m_skip_data;
+			uint64_t word = *word_pointer;
 			uint64_t offset = 0ULL;
 			const uint64_t end_offset = static_cast<uint64_t>(m_high_water_mark & 63U);
 
@@ -1367,8 +1367,8 @@ namespace scw
 				do
 				{
 					data += 64ULL;
-					++word_ptr;
-					word = *word_ptr;
+					++word_pointer;
+					word = *word_pointer;
 				} while (!word);
 			}
 
@@ -1390,27 +1390,27 @@ namespace scw
 		// VM reservation split between three memory blocks here
 		SCW_NO_INLINE void allocate_(uint32_t p_reserve_count)
 		{
-			constexpr static size_t aligned_data_bytes = align_(get_bytes_for_element_count_(t_VM_reserve_elements), alignof(uint64_t));
-			constexpr static size_t aligned_skip_array_bytes = align_(get_skip_bytes_for_element_count_(t_VM_reserve_elements), alignof(uint64_t*));
-			constexpr static size_t aligned_free_table_bytes = get_free_table_bytes_for_element_count_(t_VM_reserve_elements);
+			constexpr static size_t c_aligned_data_bytes = align_(get_bytes_for_element_count_(t_vm_reserve_elements), alignof(uint64_t));
+			constexpr static size_t c_aligned_skip_array_bytes = align_(get_skip_bytes_for_element_count_(t_vm_reserve_elements), alignof(uint64_t*));
+			constexpr static size_t c_aligned_free_table_bytes = get_free_table_bytes_for_element_count_(t_vm_reserve_elements);
 
-			[[maybe_unused]] static const bool _ = initialize_reserve_sizes_(aligned_data_bytes, aligned_skip_array_bytes, aligned_free_table_bytes);
+			[[maybe_unused]] static const bool _ = initialize_reserve_sizes_(c_aligned_data_bytes, c_aligned_skip_array_bytes, c_aligned_free_table_bytes);
 
-			const uint32_t elements_to_reserve = std::clamp(p_reserve_count, 1U, t_VM_reserve_elements);
+			const uint32_t elements_to_reserve = std::clamp(p_reserve_count, 1U, t_vm_reserve_elements);
 
 			const size_t reserve_size = get_bytes_for_element_count_(elements_to_reserve);
 			const size_t skip_reserve_size = get_skip_bytes_for_element_count_(elements_to_reserve);
 			const size_t free_table_reserve_size = get_free_table_bytes_for_element_count_(elements_to_reserve);
 
-			m_data = static_cast<Node*>(platform::reserve(sm_reserved_bytes));
+			m_data = static_cast<node*>(platform::reserve(sm_reserved_bytes));
 
 			if (!m_data) [[unlikely]]
 			{
 				allocate_fail_();
 			}
 
-			m_skip_data = reinterpret_cast<uint64_t*>(reinterpret_cast<char*>(m_data) + aligned_data_bytes);
-			m_free_table = reinterpret_cast<uint32_t*>(reinterpret_cast<char*>(m_data) + aligned_data_bytes + aligned_skip_array_bytes);
+			m_skip_data = reinterpret_cast<uint64_t*>(reinterpret_cast<char*>(m_data) + c_aligned_data_bytes);
+			m_free_table = reinterpret_cast<uint32_t*>(reinterpret_cast<char*>(m_data) + c_aligned_data_bytes + c_aligned_skip_array_bytes);
 
 			m_capacity = elements_to_reserve;
 
@@ -1421,7 +1421,7 @@ namespace scw
 				allocate_fail_();
 			}
 
-			memset(m_skip_data, 0xFF, skip_reserve_size);
+			memset(m_skip_data, 0xFFFFFFFF, skip_reserve_size);
 		}
 
 
@@ -1454,7 +1454,7 @@ namespace scw
 
 			if constexpr (std::is_trivially_copyable_v<T>)
 			{
-				memcpy(m_data, p_other.m_data, static_cast<size_t>(m_high_water_mark) * sizeof(Node));
+				memcpy(m_data, p_other.m_data, static_cast<size_t>(m_high_water_mark) * sizeof(node));
 			}
 			else
 			{
@@ -1545,7 +1545,7 @@ namespace scw
 			const size_t old_skip_bytes = get_skip_bytes_for_element_count_(m_capacity);
 			const size_t old_free_table_bytes = get_free_table_bytes_for_element_count_(m_capacity);
 
-			p_elements_to_commit = std::min(p_elements_to_commit, t_VM_reserve_elements - m_capacity);
+			p_elements_to_commit = std::min(p_elements_to_commit, t_vm_reserve_elements - m_capacity);
 
 			const size_t bytes_to_commit = get_bytes_for_element_count_(p_elements_to_commit);
 			const size_t skip_bytes_to_commit = get_skip_bytes_for_element_count_(m_capacity + p_elements_to_commit) - old_skip_bytes;
@@ -1575,7 +1575,7 @@ namespace scw
 				}
 			}
 
-			memset(reinterpret_cast<char*>(m_skip_data) + old_skip_bytes, 0xFF, skip_bytes_to_commit);
+			memset(reinterpret_cast<char*>(m_skip_data) + old_skip_bytes, 0xFFFFFFFF, skip_bytes_to_commit);
 
 			m_capacity = m_capacity + p_elements_to_commit;
 		}
@@ -1788,28 +1788,28 @@ namespace scw
 		// decommits physical memory, making sure not to decommit page when one memory block bleeds into the page of another
 		SCW_NO_INLINE void decommit_pages_(uint32_t p_index) noexcept
 		{
-			const size_t bytes_occupied = align_(static_cast<size_t>(p_index + 1U) * sizeof(Node), platform::OS_PAGE_SIZE);
-			const size_t bytes_comitted = align_(m_capacity * sizeof(Node), platform::OS_PAGE_SIZE);
+			const size_t bytes_occupied = align_(static_cast<size_t>(p_index + 1U) * sizeof(node), platform::os_page_size);
+			const size_t bytes_comitted = align_(m_capacity * sizeof(node), platform::os_page_size);
 			size_t bytes_to_decommit = bytes_comitted - bytes_occupied;
 
 			if (reinterpret_cast<char*>(m_data) + bytes_comitted > reinterpret_cast<char*>(m_skip_data))
 			{
-				bytes_to_decommit -= std::min(bytes_to_decommit, platform::OS_PAGE_SIZE);
+				bytes_to_decommit -= std::min(bytes_to_decommit, platform::os_page_size);
 			}
 
-			const size_t skip_page_offset = reinterpret_cast<uintptr_t>(m_skip_data) - _andn_u64(platform::OS_PAGE_SIZE - 1ULL, reinterpret_cast<uintptr_t>(m_skip_data));
-			const size_t skip_bytes_occupied = align_(skip_page_offset + get_skip_bytes_for_element_count_(static_cast<size_t>(p_index + 1U)), platform::OS_PAGE_SIZE);
-			const size_t skip_bytes_comitted = align_(skip_page_offset + get_skip_bytes_for_element_count_(m_capacity), platform::OS_PAGE_SIZE);
+			const size_t skip_page_offset = reinterpret_cast<uintptr_t>(m_skip_data) - _andn_u64(platform::os_page_size - 1ULL, reinterpret_cast<uintptr_t>(m_skip_data));
+			const size_t skip_bytes_occupied = align_(skip_page_offset + get_skip_bytes_for_element_count_(static_cast<size_t>(p_index + 1U)), platform::os_page_size);
+			const size_t skip_bytes_comitted = align_(skip_page_offset + get_skip_bytes_for_element_count_(m_capacity), platform::os_page_size);
 			size_t skip_bytes_to_decommit = skip_bytes_comitted - skip_bytes_occupied;
 
 			if (reinterpret_cast<char*>(m_skip_data) - skip_page_offset + skip_bytes_comitted > reinterpret_cast<char*>(m_free_table))
 			{
-				skip_bytes_to_decommit -= std::min(skip_bytes_to_decommit, platform::OS_PAGE_SIZE);
+				skip_bytes_to_decommit -= std::min(skip_bytes_to_decommit, platform::os_page_size);
 			}
 
-			const size_t free_table_page_offset = reinterpret_cast<uintptr_t>(m_free_table) - _andn_u64(platform::OS_PAGE_SIZE - 1ULL, reinterpret_cast<uintptr_t>(m_free_table));
-			const size_t free_table_bytes_occupied = align_(free_table_page_offset + get_free_table_bytes_for_element_count_(static_cast<size_t>(p_index + 1U)), platform::OS_PAGE_SIZE);
-			const size_t free_table_bytes_comitted = align_(free_table_page_offset + get_free_table_bytes_for_element_count_(m_capacity), platform::OS_PAGE_SIZE);
+			const size_t free_table_page_offset = reinterpret_cast<uintptr_t>(m_free_table) - _andn_u64(platform::os_page_size - 1ULL, reinterpret_cast<uintptr_t>(m_free_table));
+			const size_t free_table_bytes_occupied = align_(free_table_page_offset + get_free_table_bytes_for_element_count_(static_cast<size_t>(p_index + 1U)), platform::os_page_size);
+			const size_t free_table_bytes_comitted = align_(free_table_page_offset + get_free_table_bytes_for_element_count_(m_capacity), platform::os_page_size);
 			const size_t free_table_bytes_to_decommit = free_table_bytes_comitted - free_table_bytes_occupied;
 
 			if (bytes_to_decommit)
@@ -1836,19 +1836,19 @@ namespace scw
 				}
 			}
 
-			m_capacity = std::min(t_VM_reserve_elements, static_cast<uint32_t>(bytes_occupied / sizeof(Node)));
+			m_capacity = std::min(t_vm_reserve_elements, static_cast<uint32_t>(bytes_occupied / sizeof(node)));
 		}
 
 		// helpers
-		[[nodiscard]] uint32_t index_of_(T* element) noexcept
+		[[nodiscard]] uint32_t index_of_(T* p_element) noexcept
 		{
-			return reinterpret_cast<Node*>(reinterpret_cast<char*>(element) - offsetof(Node, value)) - m_data;
+			return reinterpret_cast<node*>(reinterpret_cast<char*>(p_element) - offsetof(node, value)) - m_data;
 		}
 
 
-		[[nodiscard]] uint32_t index_of_(const T* element) const noexcept
+		[[nodiscard]] uint32_t index_of_(const T* p_element) const noexcept
 		{
-			return reinterpret_cast<const Node*>(reinterpret_cast<const char*>(element) - offsetof(Node, value)) - m_data;
+			return reinterpret_cast<const node*>(reinterpret_cast<const char*>(p_element) - offsetof(node, value)) - m_data;
 		}
 
 
@@ -1860,7 +1860,7 @@ namespace scw
 		// calculates bytes for the three memory blocks, adding sentinel to the end for high water mark to reside when full
 		[[nodiscard]] constexpr static size_t get_bytes_for_element_count_(uint32_t p_count) noexcept
 		{
-			return static_cast<size_t>(p_count) * sizeof(Node);
+			return static_cast<size_t>(p_count) * sizeof(node);
 		}
 
 
@@ -1880,7 +1880,7 @@ namespace scw
 		{
 			platform::initialize_system_page_data();
 
-			sm_reserved_bytes = align_(p_aligned_data_bytes + p_skip_array_bytes + p_free_table_bytes, platform::OS_PAGE_SIZE);
+			sm_reserved_bytes = align_(p_aligned_data_bytes + p_skip_array_bytes + p_free_table_bytes, platform::os_page_size);
 
 			return false;
 		}
@@ -1894,7 +1894,7 @@ namespace scw
 	private: // MEMBERS
 		inline static size_t sm_reserved_bytes;
 
-		Node* m_data = nullptr;
+		node* m_data = nullptr;
 		uint64_t* m_skip_data = nullptr;
 		uint32_t* m_free_table = nullptr;
 		uint32_t m_free_list = UINT32_MAX;
@@ -1917,9 +1917,9 @@ namespace scw
 		constexpr static bool c_constant = std::same_as<t_is_const, is_const>;
 
 
-		using ValueType = std::conditional_t<c_constant, const T, T>;
-		using DataValueType = std::conditional_t<c_constant, const typename bitset_map<T, t_elements, t_use_generations>::Node*, typename bitset_map<T, t_elements, t_use_generations>::Node*>;
-		using SkipValueType = std::conditional_t<c_constant, const uint64_t*, uint64_t*>;
+		using return_value = std::conditional_t<c_constant, const T, T>;
+		using data_value_type = std::conditional_t<c_constant, const typename bitset_map<T, t_elements, t_use_generations>::node*, typename bitset_map<T, t_elements, t_use_generations>::node*>;
+		using skip_value_type = std::conditional_t<c_constant, const uint64_t*, uint64_t*>;
 
 	public:
 		using value_type = T;
@@ -1929,8 +1929,8 @@ namespace scw
 	public:
 		bitset_map_iterator() noexcept = default;
 
-		bitset_map_iterator(DataValueType p_data, SkipValueType p_skip_ptr_base, uint64_t p_word, uint32_t p_skip_offset, uint32_t p_offset) noexcept :
-			m_data(p_data), m_skip_ptr_base(p_skip_ptr_base), m_word(p_word), m_skip_offset(p_skip_offset), m_offset(p_offset) {}
+		bitset_map_iterator(data_value_type p_data, skip_value_type p_skip_pointer_base, uint64_t p_word, uint32_t p_skip_offset, uint32_t p_offset) noexcept :
+			m_data(p_data), m_skip_pointer_base(p_skip_pointer_base), m_word(p_word), m_skip_offset(p_skip_offset), m_offset(p_offset) {}
 
 	public:
 		// this is extremely fast, highly predictable branch. ttd is essentially just base + tzcnt(word), while blsr is computed alongside payload. 4 cycles ttd in most cases
@@ -1940,7 +1940,7 @@ namespace scw
 			{
 				m_data += 64ULL;
 				m_skip_offset += 64U;
-				m_word = m_skip_ptr_base[m_skip_offset >> 6U];
+				m_word = m_skip_pointer_base[m_skip_offset >> 6U];
 			}
 
 			m_offset = static_cast<uint32_t>(_tzcnt_u64(m_word));
@@ -1965,7 +1965,7 @@ namespace scw
 			{
 				m_data -= 64ULL;
 				m_skip_offset -= 64U;
-				m_word = m_skip_ptr_base[m_skip_offset >> 6U];
+				m_word = m_skip_pointer_base[m_skip_offset >> 6U];
 			}
 
 			m_offset = 63U - static_cast<uint32_t>(_lzcnt_u64(m_word));
@@ -1984,28 +1984,28 @@ namespace scw
 		}
 
 
-		[[nodiscard]] ValueType& operator*() const noexcept
+		[[nodiscard]] return_value& operator*() const noexcept
 		{
 			return m_data[m_offset].value;
 		}
 
 
-		[[nodiscard]] ValueType* operator->() const noexcept
+		[[nodiscard]] return_value* operator->() const noexcept
 		{
-			return reinterpret_cast<ValueType*>(&m_data[m_offset].value);
+			return reinterpret_cast<return_value*>(&m_data[m_offset].value);
 		}
 
 
-		bool operator==(const bitset_map_iterator& other) const noexcept { return m_skip_offset + m_offset == other.m_skip_offset + other.m_offset; }
-		bool operator!=(const bitset_map_iterator& other) const noexcept { return m_skip_offset + m_offset != other.m_skip_offset + other.m_offset; }
-		bool operator>(const bitset_map_iterator& other) const noexcept { return m_skip_offset + m_offset > other.m_skip_offset + other.m_offset; }
-		bool operator<(const bitset_map_iterator& other) const noexcept { return m_skip_offset + m_offset < other.m_skip_offset + other.m_offset; }
-		bool operator>=(const bitset_map_iterator& other) const noexcept { return m_skip_offset + m_offset >= other.m_skip_offset + other.m_offset; }
-		bool operator<=(const bitset_map_iterator& other) const noexcept { return m_skip_offset + m_offset <= other.m_skip_offset + other.m_offset; }
+		bool operator==(const bitset_map_iterator& p_other) const noexcept { return m_skip_offset + m_offset == p_other.m_skip_offset + p_other.m_offset; }
+		bool operator!=(const bitset_map_iterator& p_other) const noexcept { return m_skip_offset + m_offset != p_other.m_skip_offset + p_other.m_offset; }
+		bool operator>(const bitset_map_iterator& p_other) const noexcept { return m_skip_offset + m_offset > p_other.m_skip_offset + p_other.m_offset; }
+		bool operator<(const bitset_map_iterator& p_other) const noexcept { return m_skip_offset + m_offset < p_other.m_skip_offset + p_other.m_offset; }
+		bool operator>=(const bitset_map_iterator& p_other) const noexcept { return m_skip_offset + m_offset >= p_other.m_skip_offset + p_other.m_offset; }
+		bool operator<=(const bitset_map_iterator& p_other) const noexcept { return m_skip_offset + m_offset <= p_other.m_skip_offset + p_other.m_offset; }
 
 	private:
-		DataValueType m_data;
-		SkipValueType m_skip_ptr_base;
+		data_value_type m_data;
+		skip_value_type m_skip_pointer_base;
 		uint64_t m_word;
 		uint32_t m_skip_offset;
 		uint32_t m_offset;
@@ -2082,21 +2082,6 @@ namespace scw
 			}
 		}
 
-	private:
-		void allocate(size_t p_element_count, size_t p_offset)
-		{
-			m_state.size = p_element_count;
-
-			m_state.data = m_state.allocate(m_state.size);
-			m_state.offset_data = m_state.data - p_offset;
-		}
-
-
-		void insert(uint32_t p_old_handle, uint32_t p_new_handle) noexcept
-		{
-			m_state.offset_data[p_old_handle] = p_new_handle;
-		}
-
 	public:
 		[[nodiscard]] uint32_t find(uint32_t p_old_handle) const noexcept
 		{
@@ -2107,6 +2092,21 @@ namespace scw
 		[[nodiscard]] bool is_empty() const noexcept
 		{
 			return !m_state.size;
+		}
+
+	private:
+		void allocate_(size_t p_element_count, size_t p_offset)
+		{
+			m_state.size = p_element_count;
+
+			m_state.data = m_state.allocate(m_state.size);
+			m_state.offset_data = m_state.data - p_offset;
+		}
+
+
+		void insert_(uint32_t p_old_handle, uint32_t p_new_handle) noexcept
+		{
+			m_state.offset_data[p_old_handle] = p_new_handle;
 		}
 
 	private:
