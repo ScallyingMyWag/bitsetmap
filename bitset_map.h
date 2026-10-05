@@ -36,8 +36,16 @@ namespace scw
 	struct no_generations {};
 	struct is_const {};
 	struct not_const {};
+	struct dense_iterate {};
+	struct sparse_iterate {};
 	struct return_table {};
 	struct no_table {};
+
+	struct early_exit {};
+	struct no_exit {};
+	struct clear_transform {};
+	struct for_each_transform {};
+	struct erase_if_transform {};
 
 
 	template<class T>
@@ -48,6 +56,15 @@ namespace scw
 
 	template<class T>
 	concept return_remap_table_concept = std::same_as<T, return_table> || std::same_as<T, no_table>;
+
+	template<class T>
+	concept iteration_concept = std::same_as<T, sparse_iterate> || std::same_as<T, dense_iterate>;
+
+	template<class T>
+	concept deallocate_early_exit_concept = std::same_as<T, early_exit> || std::same_as<T, no_exit>;
+
+	template<class T>
+	concept iteration_transform_concept = std::same_as<T, clear_transform> || std::same_as<T, for_each_transform> || std::same_as<T, erase_if_transform>;
 
 
 	template<class, uint32_t, use_generations_concept, const_iterator_concept>
@@ -181,7 +198,7 @@ namespace scw
 				}
 				catch (...)
 				{
-					deallocate_<true>(index);
+					deallocate_<early_exit>(index);
 
 					throw;
 				}
@@ -220,7 +237,7 @@ namespace scw
 					}
 					catch (...)
 					{
-						deallocate_<true>(index);
+						deallocate_<early_exit>(index);
 
 						throw;
 					}
@@ -251,7 +268,7 @@ namespace scw
 					}
 					catch (...)
 					{
-						deallocate_<true>(index);
+						deallocate_<early_exit>(index);
 
 						throw;
 					}
@@ -291,7 +308,7 @@ namespace scw
 					}
 					catch (...)
 					{
-						deallocate_<true>(index);
+						deallocate_<early_exit>(index);
 
 						throw;
 					}
@@ -322,7 +339,7 @@ namespace scw
 					}
 					catch (...)
 					{
-						deallocate_<true>(index);
+						deallocate_<early_exit>(index);
 
 						throw;
 					}
@@ -472,11 +489,12 @@ namespace scw
 			return emplace_back_unchecked(std::move(p_value));
 		}
 
-
-		void fill(uint32_t p_count, const T& p_value)
+		// see comment above for_each_while for performance tip regarding lambdas
+		template<class t_func, class... Args>
+		void fill(uint32_t p_count, t_func p_func, Args&&... p_args)
 			requires (std::is_nothrow_constructible_v<T, const T&>)
 		{
-			fill_slots_(p_count, p_value);
+			fill_slots_(p_count, p_func, std::forward<Args>(p_args)...);
 		}
 
 
@@ -832,6 +850,38 @@ namespace scw
 		}
 
 
+		template<class t_iterator>
+		[[nodiscard]] handle get_handle_from_iterator(const t_iterator& p_iterator) noexcept
+		{
+			const uint32_t index = p_iterator.m_skip_offset + p_iterator.m_offset;
+
+			if constexpr (c_generational)
+			{
+				return { index, p_iterator.m_data[index].generation };
+			}
+			else
+			{
+				return { index };
+			}
+		}
+
+
+		template<class t_iterator>
+		[[nodiscard]] handle get_handle_from_iterator(const t_iterator& p_iterator) const noexcept
+		{
+			const uint32_t index = p_iterator.m_skip_offset + p_iterator.m_offset;
+
+			if constexpr (c_generational)
+			{
+				return { index, p_iterator.m_data[index].generation };
+			}
+			else
+			{
+				return { index };
+			}
+		}
+
+
 		[[nodiscard]] bool is_empty() const noexcept
 		{
 			return !m_size;
@@ -896,10 +946,9 @@ namespace scw
 			}
 		}
 
-
-		// Intended to break pointer stability
+		// intended to break pointer stability
 		template<return_remap_table_concept t_return_table = return_table, class Allocator = std::allocator<uint32_t>>
-		std::conditional_t<std::same_as<t_return_table, return_table>, remap_table<Allocator>, no_table> compress()
+		std::conditional_t<std::same_as<t_return_table, return_table>, remap_table<Allocator>, no_table> compress(const Allocator& p_allocator = Allocator())
 			requires (std::is_nothrow_move_constructible_v<T>)
 		{
 			constexpr static bool c_return_table = std::same_as<t_return_table, return_table>;
@@ -908,23 +957,13 @@ namespace scw
 			if (m_size)
 			{
 				const uint32_t max_index = m_size - 1U;
-				const uint32_t max_word_index = m_size - 1U >> 6U;
+				const uint32_t move_size = m_high_water_mark - m_size;
 
-				uint32_t elements_to_move = 0U;
-
-				for (uint32_t current_index = 0U; current_index != max_word_index; ++current_index)
-				{
-					elements_to_move += static_cast<uint32_t>(64ULL - _mm_popcnt_u64(m_skip_data[current_index]));
-				}
-
-				const uint64_t shift_amount = _andn_u64(static_cast<uint64_t>(max_index), 63ULL);
-				elements_to_move += static_cast<uint32_t>(64ULL - _mm_popcnt_u64(m_skip_data[max_word_index] & UINT64_MAX >> shift_amount) - shift_amount);
-
-				if (elements_to_move)
+				if (move_size)
 				{
 					if constexpr (c_return_table)
 					{
-						table.allocate_(m_high_water_mark - m_size, m_size);
+						table.allocate_(p_allocator, move_size, m_size);
 					}
 
 					node* hole_data = m_data;
@@ -939,51 +978,58 @@ namespace scw
 					uint32_t element_offset = 0U;
 					uint32_t element_index = m_size & ~63U;
 
-					while (elements_to_move)
+					while (true)
 					{
-						while (!current_holes_word)
+						while (current_holes_word)
+						{
+							hole_offset = static_cast<uint32_t>(_tzcnt_u64(current_holes_word));
+							current_holes_word = _blsr_u64(current_holes_word);
+
+							while (!current_elements_word)
+							{
+								element_data += 64ULL;
+								element_index += 64U;
+								++element_skip_data;
+								current_elements_word = *element_skip_data;
+							}
+
+							element_offset = static_cast<uint32_t>(_tzcnt_u64(current_elements_word));
+							current_elements_word = _blsr_u64(current_elements_word);
+
+							if constexpr (c_generational)
+							{
+								hole_data[hole_offset].generation = element_data[element_offset].generation;
+							}
+
+							::new(&hole_data[hole_offset].value) T(std::move(element_data[element_offset].value));
+
+							if constexpr (!std::is_trivially_destructible_v<T>)
+							{
+								element_data[element_offset].value.~T();
+							}
+
+							if constexpr (c_return_table)
+							{
+								table.insert_(element_index + element_offset, hole_index + hole_offset);
+							}
+
+							if (hole_index + hole_offset >= m_size)
+							{
+								goto DECOMMIT;
+							}
+						}
+
+						do
 						{
 							hole_data += 64ULL;
 							hole_index += 64U;
 							++hole_skip_data;
 							current_holes_word = ~*hole_skip_data;
-						}
-
-						hole_offset = static_cast<uint32_t>(_tzcnt_u64(current_holes_word));
-						current_holes_word = _blsr_u64(current_holes_word);
-
-						while (!current_elements_word)
-						{
-							element_data += 64ULL;
-							element_index += 64U;
-							++element_skip_data;
-							current_elements_word = *element_skip_data;
-						}
-
-						element_offset = static_cast<uint32_t>(_tzcnt_u64(current_elements_word));
-						current_elements_word = _blsr_u64(current_elements_word);
-
-						if constexpr (c_generational)
-						{
-							hole_data[hole_offset].generation = element_data[element_offset].generation;
-						}
-
-						::new(&hole_data[hole_offset].value) T(std::move(element_data[element_offset].value));
-
-						if constexpr (!std::is_trivially_destructible_v<T>)
-						{
-							element_data[element_offset].value.~T();
-						}
-
-						if constexpr (c_return_table)
-						{
-							table.insert_(element_index + element_offset, hole_index + hole_offset);
-						}
-
-						--elements_to_move;
+						} while (!current_holes_word);
 					}
 				}
 
+			DECOMMIT:
 				decommit_pages_(max_index);
 			}
 			else
@@ -1003,6 +1049,7 @@ namespace scw
 
 			return table;
 		}
+
 
 		// sets all m_skip_data bits past high water mark
 		void shrink_to_fit() noexcept
@@ -1056,84 +1103,7 @@ namespace scw
 		{
 			if constexpr (c_generational || !std::is_trivially_destructible_v<T>)
 			{
-				node* data = m_data;
-				node* const end_data = data + (m_high_water_mark & ~63U);
-				uint64_t* word_pointer = m_skip_data;
-				uint64_t word = *word_pointer;
-				uint64_t offset = 0ULL;
-				const uint64_t end_offset = static_cast<uint64_t>(m_high_water_mark & 63U);
-
-				while (data != end_data) [[likely]]
-				{
-#ifdef __GNUC__
-					if (word)
-					{
-						do
-						{
-							offset = _tzcnt_u64(word);
-							word = _blsr_u64(word);
-
-							if constexpr (c_generational)
-							{
-								++data[offset].generation;
-							}
-
-							if constexpr (!std::is_trivially_destructible_v<T>)
-							{
-								data[offset].value.~T();
-							}
-
-							bool test;
-							__asm__("test %1,%1" : "=@ccz"(test) : "r"(word));
-
-							if (test)
-							{
-								break;
-							}
-						} while (true);
-					}
-#else
-					while (word)
-					{
-						offset = _tzcnt_u64(word);
-						word = _blsr_u64(word);
-
-						if constexpr (c_generational)
-						{
-							++data[offset].generation;
-						}
-
-						if constexpr (!std::is_trivially_destructible_v<T>)
-						{
-							data[offset].value.~T();
-						}
-					}
-#endif
-					do
-					{
-						data += 64ULL;
-						++word_pointer;
-						word = *word_pointer;
-					} while (!word);
-				}
-
-				offset = _tzcnt_u64(word);
-
-				while (offset != end_offset)
-				{
-					if constexpr (c_generational)
-					{
-						++data[offset].generation;
-					}
-
-					if constexpr (!std::is_trivially_destructible_v<T>)
-					{
-						data[offset].value.~T();
-					}
-
-					word = _blsr_u64(word);
-					offset = _tzcnt_u64(word);
-				}
+				visit_all_<sparse_iterate, clear_transform>();
 			}
 
 			memset(m_skip_data, 0xFFFFFFFF, static_cast<size_t>((m_high_water_mark >> 6U) + 1U) * sizeof(uint64_t));
@@ -1236,154 +1206,35 @@ namespace scw
 			return m_skip_data[p_index] & 1ULL ? to_return : ++to_return;
 		}
 
-
-		template<class t_func>
-		void for_each_while(t_func p_func) noexcept
+		// as a performance tip, avoid capturing variables you intend to modify by reference [&]
+		// observe that the function is variadic, pass references in after your lambda, make them parameters to your lambda
+		// this should help the compiler vectorize and stop writing your variable to the stack, as lambda references seem to make it paranoid
+		// about aliasing and obfuscates the code, reducing it's ability to vectorize
+		template<iteration_concept t_iteration = dense_iterate, class t_func, class... Args>
+		SCW_FORCE_INLINE void for_each_while(t_func p_func, Args&&... p_args) noexcept
 		{
-			node* data = m_data;
-			node* const end_data = data + (m_high_water_mark & ~63U);
-			uint64_t* word_pointer = m_skip_data;
-			uint64_t word = *word_pointer;
-			uint64_t offset = 0ULL;
-			const uint64_t end_offset = static_cast<uint64_t>(m_high_water_mark & 63U);
-
-			while (data != end_data) [[likely]]
-			{
-#ifdef __GNUC__ // test + jump can be up to ~23% faster than jumping on zero flag for whatever reason. MSVC is not smart enough to jump on zero flag. GCC uses the zf set by bslr which is slower than test
-				if (word)
-				{
-					do
-					{
-						offset = _tzcnt_u64(word);
-						word = _blsr_u64(word);
-
-						if (!p_func(data[offset].value))
-						{
-							return;
-						}
-
-						bool test;
-						__asm__("test %1,%1" : "=@ccz"(test) : "r"(word));
-
-						if (test)
-						{
-							break;
-						}
-					} while (true);
-				}
-#else
-				while (word)
-				{
-					offset = _tzcnt_u64(word);
-					word = _blsr_u64(word);
-
-					if (!p_func(data[offset].value))
-					{
-						return;
-					}
-				}
-#endif
-				do
-				{
-					data += 64ULL;
-					++word_pointer;
-					word = *word_pointer;
-				} while (!word);
-			}
-
-			offset = _tzcnt_u64(word);
-
-			while (offset != end_offset)
-			{
-				if (!p_func(data[offset].value))
-				{
-					return;
-				}
-
-				word = _blsr_u64(word);
-				offset = _tzcnt_u64(word);
-			}
+			visit_all_<t_iteration, for_each_transform>(p_func, 0U, UINT32_MAX, std::forward<Args>(p_args)...);
 		}
 
 
-		template<class t_func>
-		void for_each(t_func p_func) noexcept
+		template<iteration_concept t_iteration = dense_iterate, class t_func, class... Args>
+		SCW_FORCE_INLINE void for_each_chunk_while(t_func p_func, uint32_t p_start_chunk, uint32_t p_end_chunk = UINT32_MAX, Args&&... p_args) noexcept
 		{
-			for_each_while([&p_func](T& p_element) -> bool
-				{
-					p_func(p_element);
-
-					return true;
-				});
+			visit_all_<t_iteration, for_each_transform>(p_func, p_start_chunk, p_end_chunk, std::forward<Args>(p_args)...);
 		}
 
 
-		template<class t_func>
-		void erase_if(t_func p_func) noexcept
+		template<iteration_concept t_iteration = dense_iterate, class t_func, class... Args>
+		SCW_FORCE_INLINE void erase_if(t_func p_func, Args&&... p_args) noexcept
 		{
-			node* data = m_data;
-			node* const end_data = data + (m_high_water_mark & ~63U);
-			uint64_t* word_pointer = m_skip_data;
-			uint64_t word = *word_pointer;
-			uint64_t offset = 0ULL;
-			const uint64_t end_offset = static_cast<uint64_t>(m_high_water_mark & 63U);
+			visit_all_<t_iteration, erase_if_transform>(p_func, 0U, UINT32_MAX, std::forward<Args>(p_args)...);
+		}
 
-			while (data != end_data) [[likely]]
-			{
-#ifdef __GNUC__
-				if (word)
-				{
-					do
-					{
-						offset = _tzcnt_u64(word);
-						word = _blsr_u64(word);
 
-						if (p_func(data[offset].value))
-						{
-							erase(static_cast<uint32_t>(data - m_data + offset));
-						}
-
-						bool test;
-						__asm__("test %1,%1" : "=@ccz"(test) : "r"(word));
-
-						if (test)
-						{
-							break;
-						}
-					} while (true);
-				}
-#else
-				while (word)
-				{
-					offset = _tzcnt_u64(word);
-					word = _blsr_u64(word);
-
-					if (p_func(data[offset].value))
-					{
-						erase(static_cast<uint32_t>(data - m_data + offset));
-					}
-				}
-#endif
-				do
-				{
-					data += 64ULL;
-					++word_pointer;
-					word = *word_pointer;
-				} while (!word);
-			}
-
-			offset = _tzcnt_u64(word);
-
-			while (offset != end_offset)
-			{
-				if (p_func(data[offset].value))
-				{
-					erase(static_cast<uint32_t>(data - m_data + offset));
-				}
-
-				word = _blsr_u64(word);
-				offset = _tzcnt_u64(word);
-			}
+		template<iteration_concept t_iteration = dense_iterate, class t_func, class... Args>
+		SCW_FORCE_INLINE void erase_if(t_func p_func, uint32_t p_start_chunk, uint32_t p_end_chunk = UINT32_MAX, Args&&... p_args) noexcept
+		{
+			visit_all_<t_iteration, erase_if_transform>(p_func, p_start_chunk, p_end_chunk, std::forward<Args>(p_args)...);
 		}
 
 	private: // IMPLEMENTATION
@@ -1477,7 +1328,7 @@ namespace scw
 				}
 				catch (...)
 				{
-					deallocate_<true>(index);
+					deallocate_<early_exit>(index);
 
 					throw;
 				}
@@ -1505,7 +1356,7 @@ namespace scw
 		}
 
 		// this is okay, m_data is checked
-		template<bool t_enable_last_index = false>
+		template<deallocate_early_exit_concept t_early_exit = no_exit>
 		void deallocate_(uint32_t p_last_index = 0U) noexcept
 		{
 			if constexpr (!std::is_trivially_destructible_v<T>)
@@ -1514,7 +1365,7 @@ namespace scw
 				{
 					for (T& element : *this)
 					{
-						if constexpr (t_enable_last_index)
+						if constexpr (std::same_as<t_early_exit, early_exit>)
 						{
 							if (index_of_(&element) >= p_last_index)
 							{
@@ -1645,7 +1496,8 @@ namespace scw
 		}
 
 
-		SCW_FORCE_INLINE void fill_slots_(uint32_t p_count, const T& p_value)
+		template<class t_func, class... Args >
+		SCW_FORCE_INLINE void fill_slots_(uint32_t p_count, t_func p_func, Args&&... p_args)
 		{
 			m_size += p_count;
 
@@ -1659,7 +1511,7 @@ namespace scw
 				for (uint32_t count = 0U; count < free_slots && count < p_count; ++count)
 				{
 					const uint64_t offset = _tzcnt_u64(word);
-					construct_in_slot_(static_cast<uint32_t>(scaled_index + offset), p_value);
+					construct_in_slot_(static_cast<uint32_t>(scaled_index + offset), p_func(std::forward<Args>(p_args)...));
 					word = _blsr_u64(word);
 				}
 
@@ -1684,7 +1536,7 @@ namespace scw
 
 			for (uint32_t count = 0U; count < p_count; ++count)
 			{
-				construct_in_slot_(m_high_water_mark, p_value);
+				construct_in_slot_(m_high_water_mark, p_func(std::forward<Args>(p_args)...));
 				++m_high_water_mark;
 			}
 		}
@@ -1839,7 +1691,353 @@ namespace scw
 			m_capacity = std::min(t_vm_reserve_elements, static_cast<uint32_t>(bytes_occupied / sizeof(node)));
 		}
 
-		// helpers
+
+		template<iteration_concept t_iteration, iteration_transform_concept t_iteration_transform, class t_func, class... Args>
+		SCW_FORCE_INLINE void visit_all_(t_func p_func, uint32_t p_start_chunk, uint32_t p_end_chunk, Args&&... p_args) noexcept
+		{
+			if constexpr (std::same_as<t_iteration, dense_iterate>)
+			{
+				visit_all_dense_<t_iteration_transform>(p_func, p_start_chunk, p_end_chunk, std::forward<Args>(p_args)...);
+			}
+			else if constexpr (std::same_as<t_iteration, sparse_iterate>)
+			{
+				visit_all_sparse_<t_iteration_transform>(p_func, p_start_chunk, p_end_chunk, std::forward<Args>(p_args)...);
+			}
+		}
+
+
+		template<iteration_transform_concept t_iteration_transform, class t_func, class... Args>
+		SCW_FORCE_INLINE void visit_all_dense_(t_func p_func, uint32_t p_start_chunk, uint32_t p_end_chunk, Args&&... p_args) noexcept
+		{
+			constexpr static bool c_clear_transform = std::same_as<t_iteration_transform, clear_transform>;
+			constexpr static bool c_for_each_transform = std::same_as<t_iteration_transform, for_each_transform>;
+			constexpr static bool c_erase_if_transform = std::same_as<t_iteration_transform, erase_if_transform>;
+
+			node* data = m_data + (p_start_chunk << 6U);
+			node* const end_data = m_data + (p_end_chunk == UINT32_MAX ? m_high_water_mark & ~63U : p_end_chunk << 6U);
+			uint64_t* word_pointer = m_skip_data + p_start_chunk;
+			uint64_t word = *word_pointer;
+			uint64_t offset = 0ULL;
+			const uint64_t end_offset = static_cast<uint64_t>(m_high_water_mark & 63U);
+
+			while (data != end_data) [[likely]]
+			{
+				while (word == UINT64_MAX)
+				{
+					for (offset = 0; offset != 64ULL; ++offset)
+					{
+						if constexpr (c_clear_transform)
+						{
+							if constexpr (c_generational)
+							{
+								++data[offset].generation;
+							}
+
+							if constexpr (!std::is_trivially_destructible_v<T>)
+							{
+								data[offset].value.~T();
+							}
+						}
+						else if constexpr (c_for_each_transform)
+						{
+							if (!p_func(data[offset].value, std::forward<Args>(p_args)...))
+							{
+								return;
+							}
+						}
+						else if constexpr (c_erase_if_transform)
+						{
+							if (p_func(data[offset].value, std::forward<Args>(p_args)...))
+							{
+								erase(static_cast<uint32_t>(data - m_data + offset));
+							}
+						}
+					}
+
+					data += 64ULL;
+					++word_pointer;
+					word = *word_pointer;
+
+					if (data == end_data)
+					{
+						goto TAIL;
+					}
+				}
+
+#ifdef __GNUC__
+				if (word)
+				{
+					do
+					{
+						offset = _tzcnt_u64(word);
+						word = _blsr_u64(word);
+
+						if constexpr (c_clear_transform)
+						{
+							if constexpr (c_generational)
+							{
+								++data[offset].generation;
+							}
+
+							if constexpr (!std::is_trivially_destructible_v<T>)
+							{
+								data[offset].value.~T();
+							}
+						}
+						else if constexpr (c_for_each_transform)
+						{
+							if (!p_func(data[offset].value, std::forward<Args>(p_args)...))
+							{
+								return;
+							}
+						}
+						else if constexpr (c_erase_if_transform)
+						{
+							if (p_func(data[offset].value, std::forward<Args>(p_args)...))
+							{
+								erase(static_cast<uint32_t>(data - m_data + offset));
+							}
+						}
+
+						bool test;
+						__asm__("test %1,%1" : "=@ccz"(test) : "r"(word));
+
+						if (test)
+						{
+							break;
+						}
+					} while (true);
+				}
+#else
+				while (word)
+				{
+					offset = _tzcnt_u64(word);
+					word = _blsr_u64(word);
+
+					if constexpr (c_clear_transform)
+					{
+						if constexpr (c_generational)
+						{
+							++data[offset].generation;
+						}
+
+						if constexpr (!std::is_trivially_destructible_v<T>)
+						{
+							data[offset].value.~T();
+						}
+					}
+					else if constexpr (c_for_each_transform)
+					{
+						if (!p_func(data[offset].value, std::forward<Args>(p_args)...))
+						{
+							return;
+						}
+					}
+					else if constexpr (c_erase_if_transform)
+					{
+						if (p_func(data[offset].value, std::forward<Args>(p_args)...))
+						{
+							erase(static_cast<uint32_t>(data - m_data + offset));
+						}
+					}
+				}
+#endif
+
+				do
+				{
+					data += 64ULL;
+					++word_pointer;
+					word = *word_pointer;
+				} while (!word);
+			}
+
+		TAIL:
+			if (p_end_chunk != UINT32_MAX)
+			{
+				return;
+			}
+
+			offset = _tzcnt_u64(word);
+
+			while (offset != end_offset)
+			{
+				if constexpr (c_clear_transform)
+				{
+					if constexpr (c_generational)
+					{
+						++data[offset].generation;
+					}
+
+					if constexpr (!std::is_trivially_destructible_v<T>)
+					{
+						data[offset].value.~T();
+					}
+				}
+				else if constexpr (c_for_each_transform)
+				{
+					if (!p_func(data[offset].value, std::forward<Args>(p_args)...))
+					{
+						return;
+					}
+				}
+				else if constexpr (c_erase_if_transform)
+				{
+					if (p_func(data[offset].value, std::forward<Args>(p_args)...))
+					{
+						erase(static_cast<uint32_t>(data - m_data + offset));
+					}
+				}
+
+				word = _blsr_u64(word);
+				offset = _tzcnt_u64(word);
+			}
+		}
+
+
+		template<iteration_transform_concept t_iteration_transform, class t_func, class... Args>
+		SCW_FORCE_INLINE void visit_all_sparse_(t_func p_func, uint32_t p_start_chunk, uint32_t p_end_chunk, Args&&... p_args) noexcept
+		{
+			constexpr static bool c_clear_transform = std::same_as<t_iteration_transform, clear_transform>;
+			constexpr static bool c_for_each_transform = std::same_as<t_iteration_transform, for_each_transform>;
+			constexpr static bool c_erase_if_transform = std::same_as<t_iteration_transform, erase_if_transform>;
+
+			node* data = m_data + (p_start_chunk << 6U);
+			node* const end_data = m_data + (p_end_chunk == UINT32_MAX ? m_high_water_mark & ~63U : p_end_chunk << 6U);
+			uint64_t* word_pointer = m_skip_data + p_start_chunk;
+			uint64_t word = *word_pointer;
+			uint64_t offset = 0ULL;
+			const uint64_t end_offset = static_cast<uint64_t>(m_high_water_mark & 63U);
+
+			while (data != end_data) [[likely]]
+			{
+#ifdef __GNUC__
+				if (word)
+				{
+					do
+					{
+						offset = _tzcnt_u64(word);
+						word = _blsr_u64(word);
+
+						if constexpr (c_clear_transform)
+						{
+							if constexpr (c_generational)
+							{
+								++data[offset].generation;
+							}
+
+							if constexpr (!std::is_trivially_destructible_v<T>)
+							{
+								data[offset].value.~T();
+							}
+						}
+						else if constexpr (c_for_each_transform)
+						{
+							if (!p_func(data[offset].value, std::forward<Args>(p_args)...))
+							{
+								return;
+							}
+						}
+						else if constexpr (c_erase_if_transform)
+						{
+							if (p_func(data[offset].value, std::forward<Args>(p_args)...))
+							{
+								erase(static_cast<uint32_t>(data - m_data + offset));
+							}
+						}
+
+						bool test;
+						__asm__("test %1,%1" : "=@ccz"(test) : "r"(word));
+
+						if (test)
+						{
+							break;
+						}
+					} while (true);
+				}
+#else
+				while (word)
+				{
+					offset = _tzcnt_u64(word);
+					word = _blsr_u64(word);
+
+					if constexpr (c_clear_transform)
+					{
+						if constexpr (c_generational)
+						{
+							++data[offset].generation;
+						}
+
+						if constexpr (!std::is_trivially_destructible_v<T>)
+						{
+							data[offset].value.~T();
+						}
+					}
+					else if constexpr (c_for_each_transform)
+					{
+						if (!p_func(data[offset].value, std::forward<Args>(p_args)...))
+						{
+							return;
+						}
+					}
+					else if constexpr (c_erase_if_transform)
+					{
+						if (p_func(data[offset].value, std::forward<Args>(p_args)...))
+						{
+							erase(static_cast<uint32_t>(data - m_data + offset));
+						}
+					}
+				}
+#endif
+				do
+				{
+					data += 64ULL;
+					++word_pointer;
+					word = *word_pointer;
+				} while (!word);
+			}
+
+			if (p_end_chunk != UINT32_MAX)
+			{
+				return;
+			}
+
+			offset = _tzcnt_u64(word);
+
+			while (offset != end_offset)
+			{
+				if constexpr (c_clear_transform)
+				{
+					if constexpr (c_generational)
+					{
+						++data[offset].generation;
+					}
+
+					if constexpr (!std::is_trivially_destructible_v<T>)
+					{
+						data[offset].value.~T();
+					}
+				}
+				else if constexpr (c_for_each_transform)
+				{
+					if (!p_func(data[offset].value, std::forward<Args>(p_args)...))
+					{
+						return;
+					}
+				}
+				else if constexpr (c_erase_if_transform)
+				{
+					if (p_func(data[offset].value, std::forward<Args>(p_args)...))
+					{
+						erase(static_cast<uint32_t>(data - m_data + offset));
+					}
+				}
+
+				word = _blsr_u64(word);
+				offset = _tzcnt_u64(word);
+			}
+		}
+
+
 		[[nodiscard]] uint32_t index_of_(T* p_element) noexcept
 		{
 			return reinterpret_cast<node*>(reinterpret_cast<char*>(p_element) - offsetof(node, value)) - m_data;
@@ -2026,7 +2224,7 @@ namespace scw
 		remap_table(const remap_table& p_other) : m_state(p_other.m_state)
 		{
 			m_state.data = m_state.allocate(m_state.size);
-			m_state.offset_data = m_state.data - (p_other.m_state.data - p_other.m_state.offset_data);
+			m_state.offset_data = m_state.data - p_other.m_state.offset;
 			memcpy(m_state.data, p_other.m_state.data, m_state.size * sizeof(uint32_t));
 		}
 
@@ -2037,7 +2235,7 @@ namespace scw
 			{
 				CompressedState new_state = p_other.m_state;
 				new_state.data = new_state.allocate(new_state.size);
-				new_state.offset_data = new_state.data - (p_other.m_state.data - p_other.m_state.offset_data);
+				new_state.offset_data = new_state.data - p_other.m_state.offset;
 
 				m_state.deallocate(m_state.data, m_state.size);
 				memcpy(new_state.data, p_other.m_state.data, new_state.size * sizeof(uint32_t));
@@ -2053,6 +2251,7 @@ namespace scw
 		{
 			p_other.m_state.data = nullptr;
 			p_other.m_state.offset_data = nullptr;
+			p_other.m_state.offset = 0ULL;
 			p_other.m_state.size = 0ULL;
 		}
 
@@ -2067,6 +2266,7 @@ namespace scw
 
 				p_other.m_state.data = nullptr;
 				p_other.m_state.offset_data = nullptr;
+				p_other.m_state.offset = 0ULL;
 				p_other.m_state.size = 0ULL;
 			}
 
@@ -2085,7 +2285,19 @@ namespace scw
 	public:
 		[[nodiscard]] uint32_t find(uint32_t p_old_handle) const noexcept
 		{
-			return m_state.offset_data[p_old_handle];
+			const uint32_t out_of_bounds = p_old_handle < m_state.offset;
+
+			return out_of_bounds ? p_old_handle : m_state.offset_data[p_old_handle];
+		}
+
+
+		[[nodiscard]] uint32_t branchless_find(uint32_t p_old_handle) const noexcept
+		{
+			const uint32_t in_bounds = p_old_handle >= m_state.offset;
+			const uint32_t mask = 0U - in_bounds;
+			const uint32_t remap_handle = m_state.data[(p_old_handle - m_state.offset) & mask];
+
+			return in_bounds ? remap_handle : p_old_handle;
 		}
 
 
@@ -2095,12 +2307,14 @@ namespace scw
 		}
 
 	private:
-		void allocate_(size_t p_element_count, size_t p_offset)
+		void allocate_(const Allocator& p_allocator, size_t p_element_count, size_t p_offset)
 		{
-			m_state.size = p_element_count;
+			m_state = p_allocator;
 
+			m_state.size = p_element_count;
 			m_state.data = m_state.allocate(m_state.size);
 			m_state.offset_data = m_state.data - p_offset;
+			m_state.offset = p_offset;
 		}
 
 
@@ -2118,6 +2332,7 @@ namespace scw
 		{
 			uint32_t* data = nullptr;
 			uint32_t* offset_data = nullptr;
+			size_t offset = 0ULL;
 			size_t size = 0ULL;
 		};
 
