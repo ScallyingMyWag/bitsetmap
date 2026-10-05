@@ -2218,8 +2218,6 @@ namespace scw
 	private:
 		remap_table() noexcept = default;
 
-		remap_table(const Allocator& p_alloc) noexcept : m_state(p_alloc) {}
-
 	public:
 		remap_table(const remap_table& p_other) : m_state(p_other.m_state)
 		{
@@ -2309,7 +2307,7 @@ namespace scw
 	private:
 		void allocate_(const Allocator& p_allocator, size_t p_element_count, size_t p_offset)
 		{
-			m_state = p_allocator;
+			m_state = CompressedState{ p_allocator };
 
 			m_state.size = p_element_count;
 			m_state.data = m_state.allocate(m_state.size);
@@ -2346,6 +2344,7 @@ namespace scw
 #include <Windows.h>
 #else
 #include <sys/mman.h>
+#include <unistd.h>
 #endif
 
 
@@ -2403,7 +2402,7 @@ namespace scw
 
 		[[nodiscard]] bool commit(void* p_address, size_t p_size) noexcept
 		{
-			return !madvise(p_address, p_size, MADV_POPULATE_WRITE);
+			return true;
 		}
 
 
