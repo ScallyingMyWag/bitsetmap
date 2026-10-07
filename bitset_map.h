@@ -113,7 +113,7 @@ namespace scw
 	{
 	private:
 		static_assert(std::is_nothrow_destructible_v<T>, "scw::bitset_map requires T to be nothrow destructible");
-		static_assert(t_vm_reserve_elements&& t_vm_reserve_elements < UINT32_MAX, "scw::bitset_map requires reserve size to be between 1 and uint32_t max - 1");
+		static_assert(t_vm_reserve_elements && t_vm_reserve_elements < UINT32_MAX, "scw::bitset_map requires reserve size to be between 1 and uint32_t max - 1");
 
 	private: // TYPES
 		struct IndividualisticNode
