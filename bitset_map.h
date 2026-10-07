@@ -2190,7 +2190,7 @@ namespace scw
 
 		[[nodiscard]] return_value* operator->() const noexcept
 		{
-			return reinterpret_cast<return_value*>(&m_data[m_offset].value);
+			return &m_data[m_offset].value;
 		}
 
 
