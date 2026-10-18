@@ -701,17 +701,17 @@ namespace scw
 
 				if (move_size)
 				{
-					[] <size_t... t_indices>(std::index_sequence<t_indices...>, void* const* m_data, uint64_t* m_skip_data, uint32_t m_size, uint32_t move_size) noexcept
+					[] <size_t... t_indices>(std::index_sequence<t_indices...>, void* const* m_data, uint64_t * m_skip_data, uint32_t m_size, uint32_t move_size) noexcept
 					{
-						([](std::tuple<t_types*...>& m_data, uint64_t* m_skip_data, uint32_t m_size, uint32_t move_size) noexcept
+						([](void* const* m_data, uint64_t* m_skip_data, uint32_t m_size, uint32_t move_size) noexcept
 							{
-								type_<t_indices>* hole_data = static_cast<type_<t_index>*>(m_data[t_index]);
+								type_<t_indices>* hole_data = static_cast<type_<t_indices>*>(m_data[t_indices]);
 								uint64_t* hole_skip_data = m_skip_data;
 								uint64_t current_holes_word = ~*hole_skip_data;
 								uint32_t hole_index = 0U;
 								uint32_t hole_offset = 0U;
 
-								type_<t_indices>* element_data = static_cast<type_<t_index>*>(m_data[t_index]) + (m_size & ~63U);
+								type_<t_indices>* element_data = static_cast<type_<t_indices>*>(m_data[t_indices]) + (m_size & ~63U);
 								uint64_t* element_skip_data = m_skip_data + (m_size >> 6U);
 								uint64_t current_elements_word = *element_skip_data & UINT64_MAX << static_cast<uint64_t>(m_size & 63U);
 								uint32_t element_offset = 0U;
@@ -1086,10 +1086,10 @@ namespace scw
 			m_free_table = reinterpret_cast<uint32_t*>(reinterpret_cast<char*>(m_skip_data) + c_aligned_skip_array_bytes + c_aligned_generation_bytes);
 
 			const bool commit_result =
-				[] <size_t... t_indices>(std::index_sequence<t_indices...>, void* const* m_data, const types_array& reserve_sizes) noexcept
+				[] <size_t... t_indices>(std::index_sequence<t_indices...>, void* const* m_data, const types_array & reserve_sizes) noexcept
 			{
-				return (platform::commit(static_cast<type_<t_indices>*>(m_data[t_indices]), reserve_sizes[t_indices]) || ...);
-			}(std::make_index_sequence<c_last_type_index>{}, m_data, reserve_sizes);
+				return (platform::commit(static_cast<type_<t_indices>*>(m_data[t_indices]), reserve_sizes[t_indices]) && ...);
+			}(c_indices, m_data, reserve_sizes);
 
 			if (!commit_result) [[unlikely]]
 			{
@@ -1133,7 +1133,7 @@ namespace scw
 
 			allocate_(m_high_water_mark);
 
-			[] <size_t... t_indices>(std::index_sequence<t_indices...>, void* const* m_data, uint32_t m_high_water_mark, const soa_map& p_other) noexcept
+			[] <size_t... t_indices>(std::index_sequence<t_indices...>, void* const* m_data, uint32_t m_high_water_mark, const soa_map & p_other) noexcept
 			{
 				(memcpy(m_data[t_indices], p_other.m_data[t_indices], static_cast<size_t>(m_high_water_mark) * sizeof(type_<t_indices>)), ...);
 			}(c_indices, m_data, m_high_water_mark, p_other);
@@ -1281,7 +1281,7 @@ namespace scw
 			}(c_indices, m_data);
 
 			const types_array bytes_occupied_array =
-				[] <size_t... t_indices>(std::index_sequence<t_indices...>, uint32_t p_index, const types_array& page_offsets_array) noexcept -> types_array
+				[] <size_t... t_indices>(std::index_sequence<t_indices...>, uint32_t p_index, const types_array & page_offsets_array) noexcept -> types_array
 			{
 				types_array bytes_occupied_array;
 				((bytes_occupied_array[t_indices] = align_(page_offsets_array[t_indices] + get_bytes_for_element_count_(p_index + 1U, sizeof(type_<t_indices>)), platform::os_page_size)), ...);
@@ -1290,7 +1290,7 @@ namespace scw
 			}(c_indices, p_index, page_offsets_array);
 
 			const types_array bytes_comitted_array =
-				[] <size_t... t_indices>(std::index_sequence<t_indices...>, uint32_t m_capacity, const types_array& page_offsets_array) noexcept -> types_array
+				[] <size_t... t_indices>(std::index_sequence<t_indices...>, uint32_t m_capacity, const types_array & page_offsets_array) noexcept -> types_array
 			{
 				types_array bytes_comitted_array;
 				((bytes_comitted_array[t_indices] = align_(page_offsets_array[t_indices] + get_bytes_for_element_count_(m_capacity, sizeof(type_<t_indices>)), platform::os_page_size)), ...);
@@ -1299,7 +1299,7 @@ namespace scw
 			}(c_indices, m_capacity, page_offsets_array);
 
 			types_array bytes_to_decommit_array =
-				[] <size_t... t_indices>(std::index_sequence<t_indices...>, const types_array& bytes_occupied_array, const types_array& bytes_comitted_array) noexcept -> types_array
+				[] <size_t... t_indices>(std::index_sequence<t_indices...>, const types_array & bytes_occupied_array, const types_array & bytes_comitted_array) noexcept -> types_array
 			{
 				types_array bytes_to_decommit_array;
 				((bytes_to_decommit_array[t_indices] = bytes_comitted_array[t_indices] - bytes_occupied_array[t_indices]), ...);
