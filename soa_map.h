@@ -1,16 +1,17 @@
 #pragma once
 
-#include <initializer_list>
 #include <type_traits>
 #include <algorithm>
-#include <exception>
 #include <concepts>
-#include <cstdint>
+#include <iterator>
+#include <utility>
+#include <cstdlib>
+#include <cstddef>
 #include <cstring>
-#include <ranges>
+#include <cstdint>
+#include <memory>
 #include <tuple>
 #include <array>
-#include <bit>
 #include <new>
 
 #include <immintrin.h>
