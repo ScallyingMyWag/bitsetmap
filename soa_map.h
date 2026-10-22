@@ -49,24 +49,31 @@ namespace scw
 	struct for_each_transform {};
 	struct erase_if_transform {};
 
+	struct sse {};
+	struct avx2 {};
+	struct avx512 {};
+
 
 	template<class T>
 	concept is_trivial_concept = std::is_trivially_copyable_v<T> && std::is_trivially_copy_constructible_v<T> && std::is_trivially_copy_assignable_v<T> && std::is_trivially_destructible_v<T>;
 
 	template<class T>
+	concept use_generations_concept = std::same_as<T, use_generations> || std::same_as<T, no_generations>;
+
+	template<class T>
 	concept const_iterator_concept = std::same_as<T, is_const> || std::same_as<T, not_const>;
 
 	template<class T>
-	concept use_generations_concept = std::same_as<T, use_generations> || std::same_as<T, no_generations>;
+	concept iteration_concept = std::same_as<T, dense_iterate> || std::same_as<T, sparse_iterate>;
 
 	template<class T>
 	concept return_remap_table_concept = std::same_as<T, return_table> || std::same_as<T, no_table>;
 
 	template<class T>
-	concept iteration_concept = std::same_as<T, sparse_iterate> || std::same_as<T, dense_iterate>;
+	concept iteration_transform_concept = std::same_as<T, for_each_transform> || std::same_as<T, erase_if_transform>;
 
 	template<class T>
-	concept iteration_transform_concept = std::same_as<T, for_each_transform> || std::same_as<T, erase_if_transform>;
+	concept simd_concept = std::same_as<T, sse> || std::same_as<T, avx2> || std::same_as<T, avx512>;
 
 
 	template<class, const_iterator_concept>
@@ -370,9 +377,10 @@ namespace scw
 		}
 
 
+		template<simd_concept t_simd = sse>
 		void erase_chunk(uint32_t p_index, uint64_t p_mask) noexcept
 		{
-			destroy_chunk_(p_index, p_mask);
+			destroy_chunk_<t_simd>(p_index, p_mask);
 		}
 
 
@@ -615,7 +623,7 @@ namespace scw
 
 
 		template<size_t t_index>
-		[[nodiscard]] const type_<t_index>* get_chunk(uint32_t p_index) noexcept
+		[[nodiscard]] const type_<t_index>* get_chunk(uint32_t p_index) const noexcept
 		{
 			return static_cast<type_<t_index>*>(m_data[t_index]) + (p_index << 6U);
 		}
@@ -1425,7 +1433,7 @@ namespace scw
 
 				const uint64_t offset = _tzcnt_u64(~word);
 				word |= 1ULL << offset;
-				const uint32_t slot = static_cast<uint32_t>((static_cast<uint64_t>(m_free_list) << 6ULL) + offset);
+				const uint32_t slot = (m_free_list << 6U) + static_cast<uint32_t>(offset);
 
 				m_skip_data[m_free_list] = word;
 
@@ -1624,6 +1632,7 @@ namespace scw
 		}
 
 
+		template<simd_concept t_simd>
 		SCW_FORCE_INLINE void destroy_chunk_(uint32_t p_index, uint64_t p_mask) noexcept
 		{
 			const uint64_t word = m_skip_data[p_index];
@@ -1634,21 +1643,61 @@ namespace scw
 
 			if constexpr (c_generational)
 			{
-				const uint32_t scaled_index = static_cast<uint64_t>(p_index << 6U);
+				uint32_t* const base = m_generations + (p_index << 6U);
 
-				if (p_mask == UINT64_MAX)
+				if constexpr (std::same_as<t_simd, sse>)
 				{
-					for (size_t index = 0ULL; index < 64ULL; ++index)
+					uint64_t low_index = _tzcnt_u64(p_mask) & ~3ULL;
+					const uint64_t high_index = 64ULL - _lzcnt_u64(p_mask);
+
+					const __m128i INDICES = _mm_setr_epi32(1, 2, 4, 8);
+
+					for (; low_index < high_index; low_index += 4ULL)
 					{
-						++m_generations[scaled_index + index];
+						__m128i* const data = reinterpret_cast<__m128i*>(base + low_index);
+
+						__m128i GENERATIONS = _mm_load_si128(data);
+
+						const __m128i SUBTRACTION_MASK = _mm_cmpeq_epi32(_mm_and_si128(_mm_set1_epi32(static_cast<int>(p_mask >> low_index)), INDICES), INDICES);
+						GENERATIONS = _mm_sub_epi32(GENERATIONS, SUBTRACTION_MASK);
+
+						_mm_store_si128(data, GENERATIONS);
 					}
 				}
-				else
+				else if constexpr (std::same_as<t_simd, avx2>)
 				{
-					while (p_mask)
+					uint64_t low_index = _tzcnt_u64(p_mask) & ~7ULL;
+					const uint64_t high_index = 64ULL - _lzcnt_u64(p_mask);
+
+					const __m256i INDICES = _mm256_setr_epi32(1, 2, 4, 8, 16, 32, 64, 128);
+
+					for (; low_index < high_index; low_index += 8ULL)
 					{
-						++m_generations[scaled_index + _tzcnt_u64(p_mask)];
-						p_mask = _blsr_u64(p_mask);
+						__m256i* const data = reinterpret_cast<__m256i*>(base + low_index);
+
+						__m256i GENERATIONS = _mm256_load_si256(data);
+
+						const __m256i SUBTRACTION_MASK = _mm256_cmpeq_epi32(_mm256_and_si256(_mm256_set1_epi32(static_cast<int>(p_mask >> low_index)), INDICES), INDICES);
+						GENERATIONS = _mm256_sub_epi32(GENERATIONS, SUBTRACTION_MASK);
+
+						_mm256_store_si256(data, GENERATIONS);
+					}
+				}
+				else if constexpr (std::same_as<t_simd, avx512>)
+				{
+					uint64_t low_index = _tzcnt_u64(p_mask) & ~15ULL;
+					const uint64_t high_index = 64ULL - _lzcnt_u64(p_mask);
+
+					for (; low_index < high_index; low_index += 16ULL)
+					{
+						void* const data = base + low_index;
+
+						__m512i GENERATIONS = _mm512_load_epi32(data);
+
+						const __m512i SUBTRACTION_MASK = _mm512_movm_epi32(static_cast<unsigned short>(p_mask >> low_index));
+						GENERATIONS = _mm512_sub_epi32(GENERATIONS, SUBTRACTION_MASK);
+
+						_mm512_store_epi32(data, GENERATIONS);
 					}
 				}
 			}
