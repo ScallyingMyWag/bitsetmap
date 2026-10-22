@@ -697,7 +697,7 @@ namespace scw
 			if (m_size)
 			{
 				const uint32_t max_index = m_size - 1U;
-				const uint32_t max_word_index = m_size - 1U >> 6U;
+				const uint32_t max_word_index = max_index >> 6U;
 
 				uint32_t move_size = 0U;
 				for (uint32_t current_index = 0U; current_index != max_word_index; ++current_index)
@@ -822,15 +822,9 @@ namespace scw
 						} while (!current_holes_word);
 					}
 				}
-			COMPRESS_END_1:
-
-				decommit_pages_(max_index);
-			}
-			else
-			{
-				decommit_pages_(0U);
 			}
 
+		COMPRESS_END_1:
 			m_free_list = UINT32_MAX;
 			m_high_water_mark = m_size;
 
@@ -848,6 +842,13 @@ namespace scw
 
 			if (m_size)
 			{
+				if (m_size == m_high_water_mark)
+				{
+					decommit_pages_(m_size - 1);
+
+					return;
+				}
+
 				const uint64_t shift_amount = _andn_u64(static_cast<uint64_t>(m_high_water_mark), 63ULL);
 				uint64_t word = m_skip_data[m_high_water_mark >> 6U] & UINT64_MAX >> shift_amount >> 1ULL;
 				size_t skip_offset = static_cast<size_t>(m_high_water_mark & ~63U);
@@ -2120,11 +2121,12 @@ namespace scw
 		}
 
 	public:
-		[[nodiscard]] uint32_t find(uint32_t p_old_handle) const noexcept
+		void remap(uint32_t& p_old_handle) const noexcept
 		{
-			const uint32_t out_of_bounds = p_old_handle < m_state.offset;
-
-			return out_of_bounds ? p_old_handle : m_state.offset_data[p_old_handle];
+			if (p_old_handle >= m_state.offset)
+			{
+				p_old_handle = m_state.offset_data[p_old_handle];
+			}
 		}
 
 
