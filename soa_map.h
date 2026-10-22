@@ -312,10 +312,7 @@ namespace scw
 			destroy_element_(p_index);
 		}
 
-	private:
-		void erase(uint32_t p_index) const noexcept {}
 
-	public:
 		void erase(handle p_handle) noexcept
 		{
 			erase(p_handle.index);
@@ -1732,14 +1729,14 @@ namespace scw
 		template<iteration_concept t_iteration, iteration_transform_concept t_iteration_transform, class t_func, class... Args>
 		SCW_FORCE_INLINE void visit_all_caller_(t_func&& p_func, uint32_t p_start_chunk, uint32_t p_end_chunk, Args&&... p_args) noexcept
 		{
-			visit_all_<t_iteration, erase_if_transform>(*this, std::forward<t_func>(p_func), p_start_chunk, p_end_chunk, std::forward<Args>(p_args)...);
+			visit_all_<t_iteration, t_iteration_transform>(*this, std::forward<t_func>(p_func), p_start_chunk, p_end_chunk, std::forward<Args>(p_args)...);
 		}
 
 
 		template<iteration_concept t_iteration, iteration_transform_concept t_iteration_transform, class t_func, class... Args>
 		SCW_FORCE_INLINE void visit_all_caller_(t_func&& p_func, uint32_t p_start_chunk, uint32_t p_end_chunk, Args&&... p_args) const noexcept
 		{
-			visit_all_<t_iteration, erase_if_transform>(*this, std::forward<t_func>(p_func), p_start_chunk, p_end_chunk, std::forward<Args>(p_args)...);
+			visit_all_<t_iteration, t_iteration_transform>(*this, std::forward<t_func>(p_func), p_start_chunk, p_end_chunk, std::forward<Args>(p_args)...);
 		}
 
 
