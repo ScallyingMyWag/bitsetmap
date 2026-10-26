@@ -116,6 +116,18 @@ namespace scw
 	}
 
 
+	[[nodiscard]] inline bool get_bit_(const uint64_t* p_bitset, uint32_t p_index) noexcept
+	{
+		return p_bitset[p_index >> 6U] & 1ULL << static_cast<size_t>(p_index & 63U);
+	}
+
+
+	[[nodiscard]] constexpr inline size_t align_(size_t p_value, size_t p_alignment) noexcept
+	{
+		return (p_value + p_alignment - 1ULL) & ~(p_alignment - 1ULL);
+	}
+
+
 
 	// BITSET MAP
 	template<uint32_t t_vm_reserve_elements, use_generations_concept t_use_generations, class... t_types>
@@ -500,7 +512,7 @@ namespace scw
 
 		[[nodiscard]] bool is_alive(uint32_t p_index) const noexcept
 		{
-			return get_bit_(p_index);
+			return get_bit_(m_skip_data, p_index);
 		}
 
 
@@ -710,113 +722,66 @@ namespace scw
 
 				if (move_size)
 				{
-					[] <size_t... t_indices>(std::index_sequence<t_indices...>, void* const* m_data, uint64_t * m_skip_data, uint32_t m_size, uint32_t move_size) noexcept
-					{
-						([](void* const* m_data, uint64_t* m_skip_data, uint32_t m_size, uint32_t move_size) noexcept
-							{
-								type_<t_indices>* hole_data = static_cast<type_<t_indices>*>(m_data[t_indices]);
-								uint64_t* hole_skip_data = m_skip_data;
-								uint64_t current_holes_word = ~*hole_skip_data;
-								uint32_t hole_index = 0U;
-								uint32_t hole_offset = 0U;
-
-								type_<t_indices>* element_data = static_cast<type_<t_indices>*>(m_data[t_indices]) + (m_size & ~63U);
-								uint64_t* element_skip_data = m_skip_data + (m_size >> 6U);
-								uint64_t current_elements_word = *element_skip_data & UINT64_MAX << static_cast<uint64_t>(m_size & 63U);
-								uint32_t element_offset = 0U;
-								uint32_t element_index = m_size & ~63U;
-
-								while (true)
-								{
-									while (current_holes_word)
-									{
-										hole_offset = static_cast<uint32_t>(_tzcnt_u64(current_holes_word));
-										current_holes_word = _blsr_u64(current_holes_word);
-
-										while (!current_elements_word)
-										{
-											element_data += 64ULL;
-											element_index += 64U;
-											++element_skip_data;
-											current_elements_word = *element_skip_data;
-										}
-
-										element_offset = static_cast<uint32_t>(_tzcnt_u64(current_elements_word));
-										current_elements_word = _blsr_u64(current_elements_word);
-
-										::new(hole_data + hole_offset) type_<t_indices>(element_data[element_offset]);
-
-										--move_size;
-										if (!move_size)
-										{
-											goto COMPRESS_END_0;
-										}
-									}
-
-									do
-									{
-										hole_data += 64ULL;
-										hole_index += 64U;
-										++hole_skip_data;
-										current_holes_word = ~*hole_skip_data;
-									} while (!current_holes_word);
-								}
-							COMPRESS_END_0:
-							}(m_data, m_skip_data, m_size, move_size), ...);
-					}(c_indices, m_data, m_skip_data, m_size, move_size);
-
 					if constexpr (c_return_table)
 					{
-						table.allocate_(p_allocator, m_high_water_mark - m_size, m_size);
+						table.allocate_(p_allocator, m_skip_data, static_cast<size_t>(m_size), static_cast<size_t>(m_high_water_mark));
 					}
 
 					uint64_t* hole_skip_data = m_skip_data;
 					uint64_t current_holes_word = ~*hole_skip_data;
-					uint32_t hole_index = 0U;
-					uint32_t hole_offset = 0U;
+					size_t hole_start = 0ULL;
+					uint64_t hole_offset = 0ULL;
 
 					uint64_t* element_skip_data = m_skip_data + (m_size >> 6U);
 					uint64_t current_elements_word = *element_skip_data & UINT64_MAX << static_cast<uint64_t>(m_size & 63U);
-					uint32_t element_offset = 0U;
-					uint32_t element_index = m_size & ~63U;
+					size_t element_start = static_cast<size_t>(m_size & ~63U);
+					uint64_t element_offset = 0ULL;
 
 					while (true)
 					{
 						while (current_holes_word)
 						{
-							hole_offset = static_cast<uint32_t>(_tzcnt_u64(current_holes_word));
+							hole_offset = _tzcnt_u64(current_holes_word);
 							current_holes_word = _blsr_u64(current_holes_word);
 
 							while (!current_elements_word)
 							{
-								element_index += 64U;
+								element_start += 64ULL;
 								++element_skip_data;
 								current_elements_word = *element_skip_data;
 							}
 
-							element_offset = static_cast<uint32_t>(_tzcnt_u64(current_elements_word));
+							element_offset = _tzcnt_u64(current_elements_word);
 							current_elements_word = _blsr_u64(current_elements_word);
+
+							const uint32_t hole_slot = hole_start + hole_offset;
+							const uint32_t element_slot = element_start + element_offset;
+
+							[] <size_t... t_indices>(std::index_sequence<t_indices...>, void* const* m_data, size_t hole_slot, size_t element_slot) noexcept
+							{
+								(::new(static_cast<type_<t_indices>*>(m_data[t_indices]) + hole_slot) type_<t_indices>(static_cast<type_<t_indices>*>(m_data[t_indices])[element_slot]), ...);
+							}(c_indices, m_data, hole_slot, element_slot);
 
 							if constexpr (c_return_table)
 							{
-								table.insert_(element_index + element_offset, hole_index + hole_offset);
+								table.insert_(element_slot, hole_slot);
 							}
 
 							if constexpr (c_generational)
 							{
-								m_generations[hole_index + hole_offset] = m_generations[element_index + element_offset];
+								m_generations[hole_slot] = m_generations[element_slot];
 							}
 
 							--move_size;
 							if (!move_size)
 							{
-								goto COMPRESS_END_1;
+								goto COMPRESS_END;
 							}
 						}
 
 						do
 						{
-							hole_index += 64U;
+							hole_start += 64ULL;
 							++hole_skip_data;
 							current_holes_word = ~*hole_skip_data;
 						} while (!current_holes_word);
@@ -824,7 +789,7 @@ namespace scw
 				}
 			}
 
-		COMPRESS_END_1:
+		COMPRESS_END:
 			m_free_list = UINT32_MAX;
 			m_high_water_mark = m_size;
 
@@ -1900,15 +1865,9 @@ namespace scw
 
 
 		template<size_t... t_indices, class t_func, class... Args>
-		SCW_FORCE_INLINE [[nodiscard]] bool invoke_user_callback_(std::index_sequence<t_indices...>, void* const* m_data, t_func& p_func, size_t start, uint64_t offset, const Args&... p_args) const noexcept
+		SCW_FORCE_INLINE [[nodiscard]] bool invoke_user_callback_(std::index_sequence<t_indices...>, const void* const* m_data, t_func& p_func, size_t start, uint64_t offset, const Args&... p_args) const noexcept
 		{
-			return p_func(static_cast<uint32_t>(start + offset), static_cast<type_<t_indices>*>(m_data[t_indices])[start + offset]..., p_args...);
-		}
-
-
-		[[nodiscard]] bool get_bit_(uint32_t p_index) const noexcept
-		{
-			return m_skip_data[p_index >> 6U] & 1ULL << static_cast<uint64_t>(p_index & 63U);
+			return p_func(static_cast<uint32_t>(start + offset), static_cast<const type_<t_indices>*>(m_data[t_indices])[start + offset]..., p_args...);
 		}
 
 
@@ -1950,12 +1909,6 @@ namespace scw
 			sm_reserved_bytes = align_(p_aligned_data_bytes + p_skip_array_bytes + p_generation_bytes + p_free_table_bytes, platform::os_page_size);
 
 			return false;
-		}
-
-		// aligns to next boundary
-		[[nodiscard]] constexpr static size_t align_(size_t p_value, size_t p_alignment) noexcept
-		{
-			return (p_value + p_alignment - 1ULL) & ~(p_alignment - 1ULL);
 		}
 
 	private: // MEMBERS
@@ -2064,9 +2017,11 @@ namespace scw
 	public:
 		remap_table(const remap_table& p_other) : m_state(p_other.m_state)
 		{
-			m_state.data = m_state.allocate(m_state.size);
+			m_state.data = m_state.allocate(m_state.size + m_state.bitset_size + 1ULL * static_cast<bool>(m_state.data));
 			m_state.offset_data = m_state.data - p_other.m_state.offset;
-			memcpy(m_state.data, p_other.m_state.data, m_state.size * sizeof(uint32_t));
+			m_state.deletion_data = reinterpret_cast<uint64_t*>(align_(reinterpret_cast<size_t>(m_state.data + m_state.size), 8ULL));
+			memcpy(m_state.data, p_other.m_state.data, (m_state.size + m_state.bitset_size + 1ULL) * sizeof(uint32_t));
+			memcpy(m_state.deletion_data, p_other.m_state.deletion_data, m_state.bitset_size * sizeof(uint32_t));
 		}
 
 
@@ -2075,11 +2030,13 @@ namespace scw
 			if (this != &p_other)
 			{
 				CompressedState new_state = p_other.m_state;
-				new_state.data = new_state.allocate(new_state.size);
+				new_state.data = new_state.allocate(new_state.size + new_state.bitset_size + 1ULL * static_cast<bool>(new_state.data));
+				new_state.deletion_data = reinterpret_cast<uint64_t*>(align_(reinterpret_cast<size_t>(new_state.data + new_state.size), 8ULL));
 				new_state.offset_data = new_state.data - p_other.m_state.offset;
 
 				deallocate_();
-				memcpy(new_state.data, p_other.m_state.data, new_state.size * sizeof(uint32_t));
+				memcpy(new_state.data, p_other.m_state.data, (new_state.size + new_state.bitset_size + 1ULL) * sizeof(uint32_t));
+				memcpy(new_state.deletion_data, p_other.m_state.deletion_data, new_state.bitset_size * sizeof(uint32_t));
 
 				m_state = std::move(new_state);
 			}
@@ -2091,9 +2048,11 @@ namespace scw
 		remap_table(remap_table&& p_other) noexcept : m_state(std::move(p_other.m_state))
 		{
 			p_other.m_state.data = nullptr;
+			p_other.m_state.deletion_data = nullptr;
 			p_other.m_state.offset_data = nullptr;
 			p_other.m_state.offset = 0ULL;
 			p_other.m_state.size = 0ULL;
+			p_other.m_state.bitset_size = 0ULL;
 		}
 
 
@@ -2106,9 +2065,11 @@ namespace scw
 				m_state = std::move(p_other.m_state);
 
 				p_other.m_state.data = nullptr;
+				p_other.m_state.deletion_data = nullptr;
 				p_other.m_state.offset_data = nullptr;
 				p_other.m_state.offset = 0ULL;
 				p_other.m_state.size = 0ULL;
+				p_other.m_state.bitset_size = 0ULL;
 			}
 
 			return *this;
@@ -2121,22 +2082,26 @@ namespace scw
 		}
 
 	public:
-		void remap(uint32_t& p_old_handle) const noexcept
+		bool remap(uint32_t& p_old_handle) const noexcept
 		{
+			const bool was_alive = get_bit_(m_state.deletion_data, p_old_handle);
+
 			if (p_old_handle >= m_state.offset)
 			{
 				p_old_handle = m_state.offset_data[p_old_handle];
 			}
+
+			return was_alive;
 		}
 
 
-		[[nodiscard]] uint32_t branchless_find(uint32_t p_old_handle) const noexcept
+		bool branchless_remap(uint32_t& p_old_handle) const noexcept
 		{
-			const uint32_t in_bounds = p_old_handle >= m_state.offset;
-			const uint32_t mask = 0U - in_bounds;
-			const uint32_t remap_handle = m_state.data[(p_old_handle - m_state.offset) & mask];
+			const bool was_alive = get_bit_(m_state.deletion_data, p_old_handle);
 
-			return in_bounds ? remap_handle : p_old_handle;
+			p_old_handle = branchless_remap_(p_old_handle);
+
+			return was_alive;
 		}
 
 
@@ -2146,14 +2111,18 @@ namespace scw
 		}
 
 	private:
-		void allocate_(const Allocator& p_allocator, size_t p_element_count, size_t p_offset)
+		void allocate_(const Allocator& p_allocator, const uint64_t* p_deletion_data, size_t p_element_count, size_t p_high_water_mark)
 		{
 			m_state = CompressedState{ p_allocator };
 
-			m_state.size = p_element_count;
-			m_state.data = m_state.allocate(m_state.size);
-			m_state.offset_data = m_state.data - p_offset;
-			m_state.offset = p_offset;
+			m_state.size = p_high_water_mark - p_element_count;
+			m_state.bitset_size = (((p_high_water_mark - 1ULL >> 6ULL) + 1ULL) * 2ULL);
+			m_state.data = m_state.allocate(m_state.size + m_state.bitset_size + 1ULL);
+			m_state.offset_data = m_state.data - p_element_count;
+			m_state.deletion_data = reinterpret_cast<uint64_t*>(align_(reinterpret_cast<size_t>(m_state.data + m_state.size), 8ULL));
+			m_state.offset = p_element_count;
+
+			memcpy(m_state.deletion_data, p_deletion_data, m_state.bitset_size * sizeof(uint32_t));
 		}
 
 
@@ -2161,7 +2130,7 @@ namespace scw
 		{
 			if (m_state.data)
 			{
-				m_state.deallocate(m_state.data, m_state.size);
+				m_state.deallocate(m_state.data, m_state.size + m_state.bitset_size + 1ULL);
 			}
 		}
 
@@ -2169,6 +2138,16 @@ namespace scw
 		void insert_(uint32_t p_old_handle, uint32_t p_new_handle) noexcept
 		{
 			m_state.offset_data[p_old_handle] = p_new_handle;
+		}
+
+
+		SCW_FORCE_INLINE [[nodiscard]] uint32_t branchless_remap_(uint32_t p_old_handle) const noexcept
+		{
+			const uint32_t in_bounds = p_old_handle >= m_state.offset;
+			const uint32_t mask = 0U - in_bounds;
+			const uint32_t remap_handle = m_state.data[(p_old_handle - m_state.offset) & mask];
+
+			return in_bounds ? remap_handle : p_old_handle;
 		}
 
 	private:
@@ -2180,8 +2159,10 @@ namespace scw
 		{
 			uint32_t* data = nullptr;
 			uint32_t* offset_data = nullptr;
+			uint64_t* deletion_data = nullptr;
 			size_t offset = 0ULL;
 			size_t size = 0ULL;
+			size_t bitset_size = 0ULL;
 		};
 
 		CompressedState m_state;
