@@ -1415,7 +1415,7 @@ namespace scw
 				uint64_t word = m_skip_data[m_free_list];
 
 				const uint64_t offset = _tzcnt_u64(~word);
-				word |= 1ULL << offset;
+				word |= word + 1ULL;
 				const uint32_t slot = (m_free_list << 6U) + static_cast<uint32_t>(offset);
 
 				m_skip_data[m_free_list] = word;
