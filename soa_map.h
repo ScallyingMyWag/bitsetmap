@@ -654,6 +654,12 @@ namespace scw
 		}
 
 
+		[[nodiscard]] uint32_t end_size() const noexcept
+		{
+			return m_high_water_mark;
+		}
+
+
 		[[nodiscard]] uint32_t chunk_count() const noexcept
 		{
 			return m_high_water_mark >> 6U;
