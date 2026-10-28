@@ -955,7 +955,7 @@ namespace scw
 		//     }, local_var);
 		template<iteration_concept t_iteration = dense_iterate, class t_func, class... Args>
 		SCW_FORCE_INLINE void for_each_while(t_func&& p_func, Args&&... p_args) noexcept
-			requires (std::is_nothrow_invocable_v<t_func, uint32_t, t_types&..., Args...>)
+			requires (std::is_nothrow_invocable_r_v<bool, t_func, uint32_t, t_types&..., Args...>)
 		{
 			visit_all_caller_<t_iteration, for_each_transform>(std::forward<t_func>(p_func), 0U, UINT32_MAX, std::forward<Args>(p_args)...);
 		}
@@ -963,7 +963,7 @@ namespace scw
 
 		template<iteration_concept t_iteration = dense_iterate, class t_func, class... Args>
 		SCW_FORCE_INLINE void for_each_while(t_func&& p_func, Args&&... p_args) const noexcept
-			requires (std::is_nothrow_invocable_v<t_func, uint32_t, const t_types&..., Args...>)
+			requires (std::is_nothrow_invocable_r_v<bool, t_func, uint32_t, const t_types&..., Args...>)
 		{
 			visit_all_caller_<t_iteration, for_each_transform>(std::forward<t_func>(p_func), 0U, UINT32_MAX, std::forward<Args>(p_args)...);
 		}
@@ -971,7 +971,7 @@ namespace scw
 
 		template<iteration_concept t_iteration = dense_iterate, class t_func, class... Args>
 		SCW_FORCE_INLINE void for_each_chunk_while(t_func&& p_func, uint32_t p_start_chunk, uint32_t p_end_chunk = UINT32_MAX, Args&&... p_args) noexcept
-			requires (std::is_nothrow_invocable_v<t_func, uint32_t, t_types&..., Args...>)
+			requires (std::is_nothrow_invocable_r_v<bool, t_func, uint32_t, t_types&..., Args...>)
 		{
 			visit_all_caller_<t_iteration, for_each_transform>(std::forward<t_func>(p_func), p_start_chunk, p_end_chunk, std::forward<Args>(p_args)...);
 		}
@@ -979,7 +979,7 @@ namespace scw
 
 		template<iteration_concept t_iteration = dense_iterate, class t_func, class... Args>
 		SCW_FORCE_INLINE void for_each_chunk_while(t_func&& p_func, uint32_t p_start_chunk, uint32_t p_end_chunk = UINT32_MAX, Args&&... p_args) const noexcept
-			requires (std::is_nothrow_invocable_v<t_func, uint32_t, const t_types&..., Args...>)
+			requires (std::is_nothrow_invocable_r_v<bool, t_func, uint32_t, const t_types&..., Args...>)
 		{
 			visit_all_caller_<t_iteration, for_each_transform>(std::forward<t_func>(p_func), p_start_chunk, p_end_chunk, std::forward<Args>(p_args)...);
 		}
@@ -987,7 +987,7 @@ namespace scw
 
 		template<iteration_concept t_iteration = dense_iterate, class t_func, class... Args>
 		SCW_FORCE_INLINE void erase_if(t_func&& p_func, Args&&... p_args) noexcept
-			requires (std::is_nothrow_invocable_v<t_func, uint32_t, t_types&..., Args...>)
+			requires (std::is_nothrow_invocable_r_v<bool, t_func, uint32_t, t_types&..., Args...>)
 		{
 			visit_all_caller_<t_iteration, erase_if_transform>(std::forward<t_func>(p_func), 0U, UINT32_MAX, std::forward<Args>(p_args)...);
 		}
@@ -995,7 +995,7 @@ namespace scw
 
 		template<iteration_concept t_iteration = dense_iterate, class t_func, class... Args>
 		SCW_FORCE_INLINE void erase_between_chunks_if(t_func&& p_func, uint32_t p_start_chunk, uint32_t p_end_chunk = UINT32_MAX, Args&&... p_args) noexcept
-			requires (std::is_nothrow_invocable_v<t_func, uint32_t, t_types&..., Args...>)
+			requires (std::is_nothrow_invocable_r_v<bool, t_func, uint32_t, t_types&..., Args...>)
 		{
 			visit_all_caller_<t_iteration, erase_if_transform>(std::forward<t_func>(p_func), p_start_chunk, p_end_chunk, std::forward<Args>(p_args)...);
 		}
@@ -1618,77 +1618,97 @@ namespace scw
 		template<simd_concept t_simd>
 		SCW_FORCE_INLINE void destroy_chunk_(uint32_t p_index, uint64_t p_mask) noexcept
 		{
-			const uint64_t word = m_skip_data[p_index];
-
-			m_size -= static_cast<uint32_t>(_mm_popcnt_u64(p_mask));
-
-			m_skip_data[p_index] = _andn_u64(p_mask, word);
-
-			if constexpr (c_generational)
+			if constexpr (!c_generational)
 			{
-				uint32_t* const base = m_generations + (p_index << 6U);
+				const uint64_t word = m_skip_data[p_index];
 
-				if constexpr (std::same_as<t_simd, sse>)
+				m_size -= static_cast<uint32_t>(_mm_popcnt_u64(p_mask));
+
+				m_skip_data[p_index] = _andn_u64(p_mask, word);
+
+				if (word == UINT64_MAX) [[unlikely]]
 				{
-					uint64_t low_index = _tzcnt_u64(p_mask) & ~3ULL;
-					const uint64_t high_index = 64ULL - _lzcnt_u64(p_mask);
-
-					const __m128i INDICES = _mm_setr_epi32(1, 2, 4, 8);
-
-					for (; low_index < high_index; low_index += 4ULL)
+					if (p_mask)
 					{
-						__m128i* const data = reinterpret_cast<__m128i*>(base + low_index);
-
-						__m128i GENERATIONS = _mm_load_si128(data);
-
-						const __m128i SUBTRACTION_MASK = _mm_cmpeq_epi32(_mm_and_si128(_mm_set1_epi32(static_cast<int>(p_mask >> low_index)), INDICES), INDICES);
-						GENERATIONS = _mm_sub_epi32(GENERATIONS, SUBTRACTION_MASK);
-
-						_mm_store_si128(data, GENERATIONS);
-					}
-				}
-				else if constexpr (std::same_as<t_simd, avx2>)
-				{
-					uint64_t low_index = _tzcnt_u64(p_mask) & ~7ULL;
-					const uint64_t high_index = 64ULL - _lzcnt_u64(p_mask);
-
-					const __m256i INDICES = _mm256_setr_epi32(1, 2, 4, 8, 16, 32, 64, 128);
-
-					for (; low_index < high_index; low_index += 8ULL)
-					{
-						__m256i* const data = reinterpret_cast<__m256i*>(base + low_index);
-
-						__m256i GENERATIONS = _mm256_load_si256(data);
-
-						const __m256i SUBTRACTION_MASK = _mm256_cmpeq_epi32(_mm256_and_si256(_mm256_set1_epi32(static_cast<int>(p_mask >> low_index)), INDICES), INDICES);
-						GENERATIONS = _mm256_sub_epi32(GENERATIONS, SUBTRACTION_MASK);
-
-						_mm256_store_si256(data, GENERATIONS);
-					}
-				}
-				else if constexpr (std::same_as<t_simd, avx512>)
-				{
-					uint64_t low_index = _tzcnt_u64(p_mask) & ~15ULL;
-					const uint64_t high_index = 64ULL - _lzcnt_u64(p_mask);
-
-					for (; low_index < high_index; low_index += 16ULL)
-					{
-						void* const data = base + low_index;
-
-						__m512i GENERATIONS = _mm512_load_epi32(data);
-
-						const __m512i SUBTRACTION_MASK = _mm512_movm_epi32(static_cast<unsigned short>(p_mask >> low_index));
-						GENERATIONS = _mm512_sub_epi32(GENERATIONS, SUBTRACTION_MASK);
-
-						_mm512_store_epi32(data, GENERATIONS);
+						::new(m_free_table + p_index) uint32_t(m_free_list);
+						m_free_list = p_index;
 					}
 				}
 			}
-
-			if (word == UINT64_MAX) [[unlikely]]
+			else
 			{
-				::new(m_free_table + p_index) uint32_t(m_free_list);
-				m_free_list = p_index;
+				if (p_mask)
+				{
+					const uint64_t word = m_skip_data[p_index];
+
+					m_size -= static_cast<uint32_t>(_mm_popcnt_u64(p_mask));
+
+					m_skip_data[p_index] = _andn_u64(p_mask, word);
+
+					uint32_t* const base = m_generations + (p_index << 6U);
+
+					if constexpr (std::same_as<t_simd, sse>)
+					{
+						uint64_t low_index = _tzcnt_u64(p_mask) & ~3ULL;
+						const uint64_t high_index = 64ULL - _lzcnt_u64(p_mask);
+
+						const __m128i INDICES = _mm_setr_epi32(1, 2, 4, 8);
+
+						for (; low_index < high_index; low_index += 4ULL)
+						{
+							__m128i* const data = reinterpret_cast<__m128i*>(base + low_index);
+
+							__m128i GENERATIONS = _mm_load_si128(data);
+
+							const __m128i SUBTRACTION_MASK = _mm_cmpeq_epi32(_mm_and_si128(_mm_set1_epi32(static_cast<int>(p_mask >> low_index)), INDICES), INDICES);
+							GENERATIONS = _mm_sub_epi32(GENERATIONS, SUBTRACTION_MASK);
+
+							_mm_store_si128(data, GENERATIONS);
+						}
+					}
+					else if constexpr (std::same_as<t_simd, avx2>)
+					{
+						uint64_t low_index = _tzcnt_u64(p_mask) & ~7ULL;
+						const uint64_t high_index = 64ULL - _lzcnt_u64(p_mask);
+
+						const __m256i INDICES = _mm256_setr_epi32(1, 2, 4, 8, 16, 32, 64, 128);
+
+						for (; low_index < high_index; low_index += 8ULL)
+						{
+							__m256i* const data = reinterpret_cast<__m256i*>(base + low_index);
+
+							__m256i GENERATIONS = _mm256_load_si256(data);
+
+							const __m256i SUBTRACTION_MASK = _mm256_cmpeq_epi32(_mm256_and_si256(_mm256_set1_epi32(static_cast<int>(p_mask >> low_index)), INDICES), INDICES);
+							GENERATIONS = _mm256_sub_epi32(GENERATIONS, SUBTRACTION_MASK);
+
+							_mm256_store_si256(data, GENERATIONS);
+						}
+					}
+					else if constexpr (std::same_as<t_simd, avx512>)
+					{
+						uint64_t low_index = _tzcnt_u64(p_mask) & ~15ULL;
+						const uint64_t high_index = 64ULL - _lzcnt_u64(p_mask);
+
+						for (; low_index < high_index; low_index += 16ULL)
+						{
+							void* const data = base + low_index;
+
+							__m512i GENERATIONS = _mm512_load_epi32(data);
+
+							const __m512i SUBTRACTION_MASK = _mm512_movm_epi32(static_cast<unsigned short>(p_mask >> low_index));
+							GENERATIONS = _mm512_sub_epi32(GENERATIONS, SUBTRACTION_MASK);
+
+							_mm512_store_epi32(data, GENERATIONS);
+						}
+					}
+
+					if (word == UINT64_MAX) [[unlikely]]
+					{
+						::new(m_free_table + p_index) uint32_t(m_free_list);
+						m_free_list = p_index;
+					}
+				}
 			}
 		}
 
@@ -1865,7 +1885,7 @@ namespace scw
 
 
 		template<size_t... t_indices, class t_func, class... Args>
-		SCW_FORCE_INLINE [[nodiscard]] bool invoke_user_callback_(std::index_sequence<t_indices...>, const void* const* m_data, t_func& p_func, size_t start, uint64_t offset, const Args&... p_args) const noexcept
+		SCW_FORCE_INLINE [[nodiscard]] bool invoke_user_callback_(std::index_sequence<t_indices...>, const void* const* m_data, t_func& p_func, size_t start, uint64_t offset, Args&... p_args) const noexcept
 		{
 			return p_func(static_cast<uint32_t>(start + offset), static_cast<const type_<t_indices>*>(m_data[t_indices])[start + offset]..., p_args...);
 		}
@@ -2017,11 +2037,14 @@ namespace scw
 	public:
 		remap_table(const remap_table& p_other) : m_state(p_other.m_state)
 		{
-			m_state.data = m_state.allocate(m_state.size + m_state.bitset_size + 1ULL * static_cast<bool>(m_state.data));
-			m_state.offset_data = m_state.data - p_other.m_state.offset;
-			m_state.deletion_data = reinterpret_cast<uint64_t*>(align_(reinterpret_cast<size_t>(m_state.data + m_state.size), 8ULL));
-			memcpy(m_state.data, p_other.m_state.data, (m_state.size + m_state.bitset_size + 1ULL) * sizeof(uint32_t));
-			memcpy(m_state.deletion_data, p_other.m_state.deletion_data, m_state.bitset_size * sizeof(uint32_t));
+			if (m_state.data)
+			{
+				m_state.data = m_state.allocate(m_state.size + m_state.bitset_size + 1ULL);
+				m_state.offset_data = m_state.data - p_other.m_state.offset;
+				m_state.deletion_data = reinterpret_cast<uint64_t*>(align_(reinterpret_cast<size_t>(m_state.data + m_state.size), 8ULL));
+				memcpy(m_state.data, p_other.m_state.data, (m_state.size + m_state.bitset_size + 1ULL) * sizeof(uint32_t));
+				memcpy(m_state.deletion_data, p_other.m_state.deletion_data, m_state.bitset_size * sizeof(uint32_t));
+			}
 		}
 
 
@@ -2030,13 +2053,17 @@ namespace scw
 			if (this != &p_other)
 			{
 				CompressedState new_state = p_other.m_state;
-				new_state.data = new_state.allocate(new_state.size + new_state.bitset_size + 1ULL * static_cast<bool>(new_state.data));
-				new_state.deletion_data = reinterpret_cast<uint64_t*>(align_(reinterpret_cast<size_t>(new_state.data + new_state.size), 8ULL));
-				new_state.offset_data = new_state.data - p_other.m_state.offset;
 
-				deallocate_();
-				memcpy(new_state.data, p_other.m_state.data, (new_state.size + new_state.bitset_size + 1ULL) * sizeof(uint32_t));
-				memcpy(new_state.deletion_data, p_other.m_state.deletion_data, new_state.bitset_size * sizeof(uint32_t));
+				if (new_state.data)
+				{
+					new_state.data = new_state.allocate(new_state.size + new_state.bitset_size + 1ULL);
+					new_state.deletion_data = reinterpret_cast<uint64_t*>(align_(reinterpret_cast<size_t>(new_state.data + new_state.size), 8ULL));
+					new_state.offset_data = new_state.data - p_other.m_state.offset;
+
+					deallocate_();
+					memcpy(new_state.data, p_other.m_state.data, (new_state.size + new_state.bitset_size + 1ULL) * sizeof(uint32_t));
+					memcpy(new_state.deletion_data, p_other.m_state.deletion_data, new_state.bitset_size * sizeof(uint32_t));
+				}
 
 				m_state = std::move(new_state);
 			}
