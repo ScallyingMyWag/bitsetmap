@@ -44,12 +44,14 @@ namespace scw
 	struct not_const {};
 	struct dense_iterate {};
 	struct sparse_iterate {};
+	struct blind_iterate {};
 	struct return_table {};
 	struct no_table {};
 
 	struct for_each_transform {};
 	struct erase_if_transform {};
 
+	struct scaler {};
 	struct sse {};
 	struct avx2 {};
 	struct avx512 {};
@@ -65,7 +67,7 @@ namespace scw
 	concept const_iterator_concept = std::same_as<T, is_const> || std::same_as<T, not_const>;
 
 	template<class T>
-	concept iteration_concept = std::same_as<T, dense_iterate> || std::same_as<T, sparse_iterate>;
+	concept iteration_concept = std::same_as<T, dense_iterate> || std::same_as<T, sparse_iterate> || std::same_as<T, blind_iterate>;
 
 	template<class T>
 	concept return_remap_table_concept = std::same_as<T, return_table> || std::same_as<T, no_table>;
@@ -74,7 +76,7 @@ namespace scw
 	concept iteration_transform_concept = std::same_as<T, for_each_transform> || std::same_as<T, erase_if_transform>;
 
 	template<class T>
-	concept simd_concept = std::same_as<T, sse> || std::same_as<T, avx2> || std::same_as<T, avx512>;
+	concept simd_concept = std::same_as<T, scaler> || std::same_as<T, sse> || std::same_as<T, avx2> || std::same_as<T, avx512>;
 
 
 	template<class, const_iterator_concept>
@@ -963,7 +965,7 @@ namespace scw
 		SCW_FORCE_INLINE void for_each_while(t_func&& p_func, Args&&... p_args) noexcept
 			requires (std::is_nothrow_invocable_r_v<bool, t_func, uint32_t, t_types&..., Args...>)
 		{
-			visit_all_caller_<t_iteration, for_each_transform>(std::forward<t_func>(p_func), 0U, UINT32_MAX, std::forward<Args>(p_args)...);
+			visit_all_caller_<t_iteration, sse, for_each_transform>(std::forward<t_func>(p_func), 0U, UINT32_MAX, std::forward<Args>(p_args)...);
 		}
 
 
@@ -971,7 +973,7 @@ namespace scw
 		SCW_FORCE_INLINE void for_each_while(t_func&& p_func, Args&&... p_args) const noexcept
 			requires (std::is_nothrow_invocable_r_v<bool, t_func, uint32_t, const t_types&..., Args...>)
 		{
-			visit_all_caller_<t_iteration, for_each_transform>(std::forward<t_func>(p_func), 0U, UINT32_MAX, std::forward<Args>(p_args)...);
+			visit_all_caller_<t_iteration, sse, for_each_transform>(std::forward<t_func>(p_func), 0U, UINT32_MAX, std::forward<Args>(p_args)...);
 		}
 
 
@@ -979,7 +981,7 @@ namespace scw
 		SCW_FORCE_INLINE void for_each_chunk_while(t_func&& p_func, uint32_t p_start_chunk, uint32_t p_end_chunk = UINT32_MAX, Args&&... p_args) noexcept
 			requires (std::is_nothrow_invocable_r_v<bool, t_func, uint32_t, t_types&..., Args...>)
 		{
-			visit_all_caller_<t_iteration, for_each_transform>(std::forward<t_func>(p_func), p_start_chunk, p_end_chunk, std::forward<Args>(p_args)...);
+			visit_all_caller_<t_iteration, sse, for_each_transform>(std::forward<t_func>(p_func), p_start_chunk, p_end_chunk, std::forward<Args>(p_args)...);
 		}
 
 
@@ -987,23 +989,23 @@ namespace scw
 		SCW_FORCE_INLINE void for_each_chunk_while(t_func&& p_func, uint32_t p_start_chunk, uint32_t p_end_chunk = UINT32_MAX, Args&&... p_args) const noexcept
 			requires (std::is_nothrow_invocable_r_v<bool, t_func, uint32_t, const t_types&..., Args...>)
 		{
-			visit_all_caller_<t_iteration, for_each_transform>(std::forward<t_func>(p_func), p_start_chunk, p_end_chunk, std::forward<Args>(p_args)...);
+			visit_all_caller_<t_iteration, sse, for_each_transform>(std::forward<t_func>(p_func), p_start_chunk, p_end_chunk, std::forward<Args>(p_args)...);
 		}
 
 
-		template<iteration_concept t_iteration = dense_iterate, class t_func, class... Args>
+		template<iteration_concept t_iteration = dense_iterate, simd_concept t_simd = sse, class t_func, class... Args>
 		SCW_FORCE_INLINE void erase_if(t_func&& p_func, Args&&... p_args) noexcept
 			requires (std::is_nothrow_invocable_r_v<bool, t_func, uint32_t, t_types&..., Args...>)
 		{
-			visit_all_caller_<t_iteration, erase_if_transform>(std::forward<t_func>(p_func), 0U, UINT32_MAX, std::forward<Args>(p_args)...);
+			visit_all_caller_<t_iteration, t_simd, erase_if_transform>(std::forward<t_func>(p_func), 0U, UINT32_MAX, std::forward<Args>(p_args)...);
 		}
 
 
-		template<iteration_concept t_iteration = dense_iterate, class t_func, class... Args>
+		template<iteration_concept t_iteration = dense_iterate, simd_concept t_simd = sse, class t_func, class... Args>
 		SCW_FORCE_INLINE void erase_between_chunks_if(t_func&& p_func, uint32_t p_start_chunk, uint32_t p_end_chunk = UINT32_MAX, Args&&... p_args) noexcept
 			requires (std::is_nothrow_invocable_r_v<bool, t_func, uint32_t, t_types&..., Args...>)
 		{
-			visit_all_caller_<t_iteration, erase_if_transform>(std::forward<t_func>(p_func), p_start_chunk, p_end_chunk, std::forward<Args>(p_args)...);
+			visit_all_caller_<t_iteration, t_simd, erase_if_transform>(std::forward<t_func>(p_func), p_start_chunk, p_end_chunk, std::forward<Args>(p_args)...);
 		}
 
 	private: // IMPLEMENTATION
@@ -1653,7 +1655,15 @@ namespace scw
 
 					uint32_t* const base = m_generations + (p_index << 6U);
 
-					if constexpr (std::same_as<t_simd, sse>)
+					if constexpr (std::same_as<t_simd, scaler>)
+					{
+						while (p_mask)
+						{
+							++base[_tzcnt_u64(p_mask)];
+							p_mask = _blsr_u64(p_mask);
+						}
+					}
+					else if constexpr (std::same_as<t_simd, sse>)
 					{
 						uint64_t low_index = _tzcnt_u64(p_mask) & ~3ULL;
 						const uint64_t high_index = 64ULL - _lzcnt_u64(p_mask);
@@ -1719,21 +1729,35 @@ namespace scw
 		}
 
 
-		template<iteration_concept t_iteration, iteration_transform_concept t_iteration_transform, class t_func, class... Args>
+		template<iteration_concept t_iteration, simd_concept t_simd, iteration_transform_concept t_iteration_transform, class t_func, class... Args>
 		SCW_FORCE_INLINE void visit_all_caller_(t_func&& p_func, uint32_t p_start_chunk, uint32_t p_end_chunk, Args&&... p_args) noexcept
 		{
-			visit_all_<t_iteration, t_iteration_transform>(*this, std::forward<t_func>(p_func), p_start_chunk, p_end_chunk, std::forward<Args>(p_args)...);
+			if constexpr (std::same_as<t_iteration, blind_iterate>)
+			{
+				blind_iterate_<t_iteration, t_simd, t_iteration_transform>(*this, std::forward<t_func>(p_func), p_start_chunk, p_end_chunk, std::forward<Args>(p_args)...);
+			}
+			else
+			{
+				visit_all_<t_iteration, t_simd, t_iteration_transform>(*this, std::forward<t_func>(p_func), p_start_chunk, p_end_chunk, std::forward<Args>(p_args)...);
+			}
 		}
 
 
-		template<iteration_concept t_iteration, iteration_transform_concept t_iteration_transform, class t_func, class... Args>
+		template<iteration_concept t_iteration, simd_concept t_simd, iteration_transform_concept t_iteration_transform, class t_func, class... Args>
 		SCW_FORCE_INLINE void visit_all_caller_(t_func&& p_func, uint32_t p_start_chunk, uint32_t p_end_chunk, Args&&... p_args) const noexcept
 		{
-			visit_all_<t_iteration, t_iteration_transform>(*this, std::forward<t_func>(p_func), p_start_chunk, p_end_chunk, std::forward<Args>(p_args)...);
+			if constexpr (std::same_as<t_iteration, blind_iterate>)
+			{
+				blind_iterate_<t_iteration, t_simd, t_iteration_transform>(*this, std::forward<t_func>(p_func), p_start_chunk, p_end_chunk, std::forward<Args>(p_args)...);
+			}
+			else
+			{
+				visit_all_<t_iteration, t_simd, t_iteration_transform>(*this, std::forward<t_func>(p_func), p_start_chunk, p_end_chunk, std::forward<Args>(p_args)...);
+			}
 		}
 
 
-		template<iteration_concept t_iteration, iteration_transform_concept t_iteration_transform, class self, class t_func, class... Args>
+		template<iteration_concept t_iteration, simd_concept t_simd, iteration_transform_concept t_iteration_transform, class self, class t_func, class... Args>
 		SCW_FORCE_INLINE static void visit_all_(self& p_self, t_func&& p_func, uint32_t p_start_chunk, uint32_t p_end_chunk, Args&&... p_args) noexcept
 		{
 			constexpr static bool c_for_each_transform = std::same_as<t_iteration_transform, for_each_transform>;
@@ -1744,6 +1768,7 @@ namespace scw
 			uint64_t* word_pointer = p_self.m_skip_data + p_start_chunk;
 			uint64_t word = *word_pointer;
 			uint64_t offset = 0ULL;
+			uint64_t erase_word = 0ULL;
 
 			while (start < end) [[likely]]
 			{
@@ -1753,7 +1778,7 @@ namespace scw
 					{
 						for (offset = 0ULL; offset != 64ULL; ++offset)
 						{
-							const bool result = p_self.invoke_user_callback_(c_indices, p_self.m_data, p_func, start, offset, p_args...);
+							const bool result = p_self.invoke_user_callback_(c_indices, p_self.m_data, p_func, start + offset, p_args...);
 
 							if constexpr (c_for_each_transform)
 							{
@@ -1764,11 +1789,14 @@ namespace scw
 							}
 							else if constexpr (c_erase_if_transform)
 							{
-								if (result)
-								{
-									p_self.erase(static_cast<uint32_t>(start + offset));
-								}
+								erase_word |= static_cast<uint64_t>(result) << offset;
 							}
+						}
+
+						if constexpr (c_erase_if_transform)
+						{
+							p_self.destroy_chunk_<t_simd>(static_cast<uint32_t>(start >> 6ULL), erase_word);
+							erase_word = 0ULL;
 						}
 
 						start += 64ULL;
@@ -1790,7 +1818,7 @@ namespace scw
 						offset = _tzcnt_u64(word);
 						word = _blsr_u64(word);
 
-						const bool result = p_self.invoke_user_callback_(c_indices, p_self.m_data, p_func, start, offset, p_args...);
+						const bool result = p_self.invoke_user_callback_(c_indices, p_self.m_data, p_func, start + offset, p_args...);
 
 						if constexpr (c_for_each_transform)
 						{
@@ -1801,10 +1829,7 @@ namespace scw
 						}
 						else if constexpr (c_erase_if_transform)
 						{
-							if (result)
-							{
-								p_self.erase(static_cast<uint32_t>(start + offset));
-							}
+							erase_word |= static_cast<uint64_t>(result) << offset;
 						}
 
 						bool test;
@@ -1822,7 +1847,7 @@ namespace scw
 					offset = _tzcnt_u64(word);
 					word = _blsr_u64(word);
 
-					const bool result = p_self.invoke_user_callback_(c_indices, p_self.m_data, p_func, start, offset, p_args...);
+					const bool result = p_self.invoke_user_callback_(c_indices, p_self.m_data, p_func, start + offset, p_args...);
 
 					if constexpr (c_for_each_transform)
 					{
@@ -1833,13 +1858,15 @@ namespace scw
 					}
 					else if constexpr (c_erase_if_transform)
 					{
-						if (result)
-						{
-							p_self.erase(static_cast<uint32_t>(start + offset));
-						}
+						erase_word |= static_cast<uint64_t>(result) << offset;
 					}
 				}
 #endif
+				if constexpr (c_erase_if_transform)
+				{
+					p_self.destroy_chunk_<t_simd>(static_cast<uint32_t>(start >> 6ULL), erase_word);
+					erase_word = 0ULL;
+				}
 
 				do
 				{
@@ -1860,7 +1887,7 @@ namespace scw
 
 			while (offset != end_offset)
 			{
-				const bool result = p_self.invoke_user_callback_(c_indices, p_self.m_data, p_func, start, offset, p_args...);
+				const bool result = p_self.invoke_user_callback_(c_indices, p_self.m_data, p_func, start + offset, p_args...);
 
 				if constexpr (c_for_each_transform)
 				{
@@ -1871,29 +1898,75 @@ namespace scw
 				}
 				else if constexpr (c_erase_if_transform)
 				{
-					if (result)
-					{
-						p_self.erase(static_cast<uint32_t>(start + offset));
-					}
+					erase_word |= static_cast<uint64_t>(result) << offset;
 				}
 
 				word = _blsr_u64(word);
 				offset = _tzcnt_u64(word);
 			}
+
+			if constexpr (c_erase_if_transform)
+			{
+				p_self.destroy_chunk_<t_simd>(static_cast<uint32_t>(start >> 6ULL), erase_word);
+			}
+		}
+
+
+		template<iteration_concept t_iteration, simd_concept t_simd, iteration_transform_concept t_iteration_transform, class self, class t_func, class... Args>
+		SCW_FORCE_INLINE static void blind_iterate_(self& p_self, t_func&& p_func, uint32_t p_start_chunk, uint32_t p_end_chunk, Args&&... p_args) noexcept
+		{
+			size_t start = static_cast<size_t>(p_start_chunk << 6U);
+			const size_t end = p_end_chunk == UINT32_MAX ? p_self.m_high_water_mark : static_cast<size_t>(p_end_chunk << 6U);
+
+			if constexpr (std::same_as<t_iteration_transform, for_each_transform>)
+			{
+				for (; start != end; ++start)
+				{
+					if (!p_self.invoke_user_callback_(c_indices, p_self.m_data, p_func, start, p_args...))
+					{
+						return;
+					}
+				}
+			}
+			else if constexpr (std::same_as<t_iteration_transform, erase_if_transform>)
+			{
+				const size_t chunks_end = p_end_chunk == UINT32_MAX ? static_cast<size_t>(p_self.m_high_water_mark & ~63U) : static_cast<size_t>(p_end_chunk << 6U);
+				uint64_t erase_word = 0ULL;
+
+				for (; start != chunks_end; start += 64ULL)
+				{
+					for (uint32_t offset = 0ULL; offset != 64ULL; ++offset)
+					{
+						erase_word |= static_cast<uint64_t>(p_self.invoke_user_callback_(c_indices, p_self.m_data, p_func, start + offset, p_args...)) << offset;
+					}
+
+					const uint32_t chunk_index = static_cast<uint32_t>(start >> 6ULL);
+					p_self.destroy_chunk_<t_simd>(chunk_index, erase_word & p_self.get_bitmask(chunk_index));
+					erase_word = 0ULL;
+				}
+
+				for (; start != end; ++start)
+				{
+					erase_word |= static_cast<uint64_t>(p_self.invoke_user_callback_(c_indices, p_self.m_data, p_func, start, p_args...)) << (start & 63U);
+				}
+
+				const uint32_t chunk_index = static_cast<uint32_t>(start >> 6ULL);
+				p_self.destroy_chunk_<t_simd>(chunk_index, erase_word & p_self.get_bitmask(chunk_index));
+			}
 		}
 
 
 		template<size_t... t_indices, class t_func, class... Args>
-		SCW_FORCE_INLINE [[nodiscard]] bool invoke_user_callback_(std::index_sequence<t_indices...>, void* const* m_data, t_func& p_func, size_t start, uint64_t offset, Args&... p_args) noexcept
+		SCW_FORCE_INLINE [[nodiscard]] bool invoke_user_callback_(std::index_sequence<t_indices...>, void* const* m_data, t_func& p_func, size_t p_index, Args&... p_args) noexcept
 		{
-			return p_func(static_cast<uint32_t>(start + offset), static_cast<type_<t_indices>*>(m_data[t_indices])[start + offset]..., p_args...);
+			return p_func(static_cast<uint32_t>(p_index), static_cast<type_<t_indices>*>(m_data[t_indices])[p_index]..., p_args...);
 		}
 
 
 		template<size_t... t_indices, class t_func, class... Args>
-		SCW_FORCE_INLINE [[nodiscard]] bool invoke_user_callback_(std::index_sequence<t_indices...>, const void* const* m_data, t_func& p_func, size_t start, uint64_t offset, Args&... p_args) const noexcept
+		SCW_FORCE_INLINE [[nodiscard]] bool invoke_user_callback_(std::index_sequence<t_indices...>, const void* const* m_data, t_func& p_func, size_t p_index, Args&... p_args) const noexcept
 		{
-			return p_func(static_cast<uint32_t>(start + offset), static_cast<const type_<t_indices>*>(m_data[t_indices])[start + offset]..., p_args...);
+			return p_func(static_cast<uint32_t>(p_index), static_cast<const type_<t_indices>*>(m_data[t_indices])[p_index]..., p_args...);
 		}
 
 
