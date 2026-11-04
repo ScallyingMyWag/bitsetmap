@@ -2139,10 +2139,11 @@ namespace scw
 					new_state.deletion_data = reinterpret_cast<uint64_t*>(align_(reinterpret_cast<size_t>(new_state.data + new_state.size), 8ULL));
 					new_state.offset_data = new_state.data - p_other.m_state.offset;
 
-					deallocate_();
 					memcpy(new_state.data, p_other.m_state.data, (new_state.size + new_state.bitset_size + 1ULL) * sizeof(uint32_t));
 					memcpy(new_state.deletion_data, p_other.m_state.deletion_data, new_state.bitset_size * sizeof(uint32_t));
 				}
+
+				deallocate_();
 
 				m_state = std::move(new_state);
 			}
