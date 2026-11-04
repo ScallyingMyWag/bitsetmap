@@ -1795,7 +1795,7 @@ namespace scw
 
 						if constexpr (c_erase_if_transform)
 						{
-							p_self.destroy_chunk_<t_simd>(static_cast<uint32_t>(start >> 6ULL), erase_word);
+							p_self.template destroy_chunk_<t_simd>(static_cast<uint32_t>(start >> 6ULL), erase_word);
 							erase_word = 0ULL;
 						}
 
@@ -1864,7 +1864,7 @@ namespace scw
 #endif
 				if constexpr (c_erase_if_transform)
 				{
-					p_self.destroy_chunk_<t_simd>(static_cast<uint32_t>(start >> 6ULL), erase_word);
+					p_self.template destroy_chunk_<t_simd>(static_cast<uint32_t>(start >> 6ULL), erase_word);
 					erase_word = 0ULL;
 				}
 
@@ -1907,7 +1907,7 @@ namespace scw
 
 			if constexpr (c_erase_if_transform)
 			{
-				p_self.destroy_chunk_<t_simd>(static_cast<uint32_t>(start >> 6ULL), erase_word);
+				p_self.template destroy_chunk_<t_simd>(static_cast<uint32_t>(start >> 6ULL), erase_word);
 			}
 		}
 
@@ -1941,7 +1941,7 @@ namespace scw
 					}
 
 					const uint32_t chunk_index = static_cast<uint32_t>(start >> 6ULL);
-					p_self.destroy_chunk_<t_simd>(chunk_index, erase_word & p_self.get_bitmask(chunk_index));
+					p_self.template destroy_chunk_<t_simd>(chunk_index, erase_word & p_self.get_bitmask(chunk_index));
 					erase_word = 0ULL;
 				}
 
@@ -1951,7 +1951,7 @@ namespace scw
 				}
 
 				const uint32_t chunk_index = static_cast<uint32_t>(start >> 6ULL);
-				p_self.destroy_chunk_<t_simd>(chunk_index, erase_word & p_self.get_bitmask(chunk_index));
+				p_self.template destroy_chunk_<t_simd>(chunk_index, erase_word & p_self.get_bitmask(chunk_index));
 			}
 		}
 
