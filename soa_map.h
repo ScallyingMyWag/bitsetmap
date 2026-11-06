@@ -858,7 +858,10 @@ namespace scw
 			}
 
 		COMPRESS_END:
-			memset(m_skip_data, 0xFF, get_skip_bytes_for_element_count_(m_high_water_mark - 1U));
+			if (m_high_water_mark)
+			{
+				memset(m_skip_data, 0xFF, get_skip_bytes_for_element_count_(m_high_water_mark - 1U));
+			}
 
 			m_free_list = UINT32_MAX;
 			m_high_water_mark = m_size;
@@ -917,7 +920,10 @@ namespace scw
 
 			decommit_pages_(index);
 
-			memset(m_skip_data, 0xFF, get_skip_bytes_for_element_count_(m_high_water_mark - 1U));
+			if (m_high_water_mark)
+			{
+				memset(m_skip_data, 0xFF, get_skip_bytes_for_element_count_(m_high_water_mark - 1U));
+			}
 
 			m_free_list = UINT32_MAX;
 			m_high_water_mark = 0U;
@@ -1075,7 +1081,7 @@ namespace scw
 			p_reserve_count = std::clamp(p_reserve_count, 1U, t_vm_reserve_elements);
 
 			constexpr static types_array c_aligned_data_bytes_array =
-				[] <size_t... t_indices>(std::index_sequence<t_indices...>) noexcept -> types_array
+				[] <size_t... t_indices>(std::index_sequence<t_indices...>) noexcept // testing shows for constexpr lambdas, providing complex return type can cause LLVM compilation errors
 			{
 				types_array sizes;
 				std::array<size_t, c_types_count + 1ULL> alignments;
@@ -2369,7 +2375,7 @@ namespace scw
 			{
 				return remap_handle;
 			}
-			
+
 			return p_old_handle;
 #else
 			return in_bounds ? remap_handle : p_old_handle;
