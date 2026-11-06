@@ -860,7 +860,7 @@ namespace scw
 		COMPRESS_END:
 			if (m_high_water_mark)
 			{
-				memset(m_skip_data, 0xFF, get_skip_bytes_for_element_count_(m_high_water_mark));
+				memset(m_skip_data, 0xFF, get_skip_bytes_for_element_count_(m_high_water_mark - 1U));
 			}
 
 			m_free_list = UINT32_MAX;
