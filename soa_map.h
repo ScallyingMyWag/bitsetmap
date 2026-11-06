@@ -2339,7 +2339,7 @@ namespace scw
 			m_state = CompressedState{ p_allocator };
 
 			m_state.size = p_high_water_mark - p_element_count;
-			m_state.bitset_size = (((p_high_water_mark - 1ULL >> 6ULL) + 1ULL) * 2ULL);
+			m_state.bitset_size = ((((p_high_water_mark - 1ULL) >> 6ULL) + 1ULL) * 2ULL);
 			m_state.data = m_state.allocate(m_state.size + m_state.bitset_size + 1ULL);
 			m_state.offset_data = m_state.data - p_element_count;
 			m_state.deletion_data = reinterpret_cast<uint64_t*>(align_(reinterpret_cast<size_t>(m_state.data + m_state.size), 8ULL));
