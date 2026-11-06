@@ -17,6 +17,8 @@
 #include <immintrin.h>
 
 
+#ifndef SCW_COMMON_MACROS
+#define SCW_COMMON_MACROS
 #if defined(__clang__)
 #define SCW_FORCE_INLINE [[clang::always_inline]]
 #define SCW_NO_INLINE [[clang::noinline]]
@@ -32,14 +34,16 @@
 #else
 #define SCW_FORCE_INLINE
 #define SCW_NO_INLINE
+#define SCW_NO_UNIQUE_ADDRESS
+#endif
 #endif
 
 
 namespace scw
 {
 	// CONCEPTS
-	struct use_generations {};
-	struct no_generations {};
+#ifndef SCW_SHARED_TAGS
+#define SCW_SHARED_TAGS
 	struct is_const {};
 	struct not_const {};
 	struct dense_iterate {};
@@ -50,19 +54,24 @@ namespace scw
 
 	struct for_each_transform {};
 	struct erase_if_transform {};
+#endif
+
+#ifndef SCW_SHARED_GENERATION_TAGS
+#define SCW_SHARED_GENERATION_TAGS
+	struct use_generations {};
+	struct no_generations {};
+
+	template<class T>
+	concept use_generations_concept = std::same_as<T, use_generations> || std::same_as<T, no_generations>;
+#endif
 
 	struct scaler {};
 	struct sse {};
 	struct avx2 {};
 	struct avx512 {};
 
-
-	template<class T>
-	concept is_trivial_concept = std::is_trivially_copyable_v<T> && std::is_trivially_copy_constructible_v<T> && std::is_trivially_copy_assignable_v<T> && std::is_trivially_destructible_v<T>;
-
-	template<class T>
-	concept use_generations_concept = std::same_as<T, use_generations> || std::same_as<T, no_generations>;
-
+#ifndef SCW_SHARED_CONCEPTS
+#define SCW_SHARED_CONCEPTS
 	template<class T>
 	concept const_iterator_concept = std::same_as<T, is_const> || std::same_as<T, not_const>;
 
@@ -74,6 +83,13 @@ namespace scw
 
 	template<class T>
 	concept iteration_transform_concept = std::same_as<T, for_each_transform> || std::same_as<T, erase_if_transform>;
+#endif
+
+#ifndef SCW_SHARED_TRIVIAL_CONCEPT
+#define SCW_SHARED_TRIVIAL_CONCEPT
+	template<class T>
+	concept is_trivial_concept = std::is_trivially_copyable_v<T> && std::is_trivially_copy_constructible_v<T> && std::is_trivially_copy_assignable_v<T> && std::is_trivially_destructible_v<T>;
+#endif
 
 	template<class T>
 	concept simd_concept = std::same_as<T, scaler> || std::same_as<T, sse> || std::same_as<T, avx2> || std::same_as<T, avx512>;
@@ -88,6 +104,8 @@ namespace scw
 
 	namespace platform
 	{
+#ifndef SCW_SHARED_PLATFORM_HELPERS
+#define SCW_SHARED_PLATFORM_HELPERS
 		inline size_t os_page_size;
 
 
@@ -115,9 +133,11 @@ namespace scw
 		{
 			[[maybe_unused]] static const bool _ = query_system_page_info();
 		}
+#endif
 	}
 
-
+#ifndef SCW_SHARED_HELPERS
+#define SCW_SHARED_HELPERS
 	[[nodiscard]] inline bool get_bit_(const uint64_t* p_bitset, uint32_t p_index) noexcept
 	{
 		return p_bitset[p_index >> 6U] & 1ULL << static_cast<size_t>(p_index & 63U);
@@ -128,7 +148,7 @@ namespace scw
 	{
 		return (p_value + p_alignment - 1ULL) & ~(p_alignment - 1ULL);
 	}
-
+#endif
 
 
 	// BITSET MAP
@@ -391,7 +411,47 @@ namespace scw
 			try_erase(p_handle.index);
 		}
 
-		// expects user to check mask is non zero and to mask the mask using get_bitmask() because user may know this implicitly
+
+		void branchless_erase(uint32_t p_index, uint64_t p_bool) noexcept
+		{
+			branchless_destroy_element_(p_index, p_bool);
+		}
+
+
+		void branchless_erase(handle p_handle, uint64_t p_bool) noexcept
+		{
+			branchless_erase(p_handle.index, p_bool);
+		}
+
+
+		void try_branchless_erase(uint32_t p_index, uint32_t p_generation, uint64_t p_bool) noexcept
+			requires (c_generational)
+		{
+			branchless_destroy_element_(p_index, p_bool & static_cast<uint64_t>(is_generation(p_index, p_generation)));
+		}
+
+
+		void try_branchless_erase(uint32_t p_index, uint64_t p_bool) noexcept
+			requires (!c_generational)
+		{
+			branchless_destroy_element_(p_index, p_bool & static_cast<uint64_t>(is_alive(p_index)));
+		}
+
+
+		void try_branchless_erase(handle p_handle, uint64_t p_bool) noexcept
+			requires (c_generational)
+		{
+			try_branchless_erase(p_handle.index, p_handle.generation, p_bool);
+		}
+
+
+		void try_branchless_erase(handle p_handle, uint64_t p_bool) noexcept
+			requires (!c_generational)
+		{
+			try_branchless_erase(p_handle.index, p_bool);
+		}
+
+
 		template<simd_concept t_simd = sse>
 		void erase_chunk(uint32_t p_index, uint64_t p_mask) noexcept
 		{
@@ -798,10 +858,10 @@ namespace scw
 			}
 
 		COMPRESS_END:
+			memset(m_skip_data, 0xFF, get_skip_bytes_for_element_count_(m_high_water_mark - 1U));
+
 			m_free_list = UINT32_MAX;
 			m_high_water_mark = m_size;
-
-			memset(m_skip_data, 0xFF, get_skip_bytes_for_element_count_(m_capacity));
 
 			return table;
 		}
@@ -857,7 +917,7 @@ namespace scw
 
 			decommit_pages_(index);
 
-			memset(m_skip_data, 0xFF, get_skip_bytes_for_element_count_(m_capacity));
+			memset(m_skip_data, 0xFF, get_skip_bytes_for_element_count_(m_high_water_mark - 1U));
 
 			m_free_list = UINT32_MAX;
 			m_high_water_mark = 0U;
@@ -965,7 +1025,7 @@ namespace scw
 		SCW_FORCE_INLINE void for_each_while(t_func&& p_func, Args&&... p_args) noexcept
 			requires (std::is_nothrow_invocable_r_v<bool, t_func, uint32_t, t_types&..., Args...>)
 		{
-			visit_all_caller_<t_iteration, sse, for_each_transform>(std::forward<t_func>(p_func), 0U, UINT32_MAX, std::forward<Args>(p_args)...);
+			visit_all_caller_<t_iteration, for_each_transform>(std::forward<t_func>(p_func), 0U, UINT32_MAX, std::forward<Args>(p_args)...);
 		}
 
 
@@ -973,7 +1033,7 @@ namespace scw
 		SCW_FORCE_INLINE void for_each_while(t_func&& p_func, Args&&... p_args) const noexcept
 			requires (std::is_nothrow_invocable_r_v<bool, t_func, uint32_t, const t_types&..., Args...>)
 		{
-			visit_all_caller_<t_iteration, sse, for_each_transform>(std::forward<t_func>(p_func), 0U, UINT32_MAX, std::forward<Args>(p_args)...);
+			visit_all_caller_<t_iteration, for_each_transform>(std::forward<t_func>(p_func), 0U, UINT32_MAX, std::forward<Args>(p_args)...);
 		}
 
 
@@ -981,7 +1041,7 @@ namespace scw
 		SCW_FORCE_INLINE void for_each_chunk_while(t_func&& p_func, uint32_t p_start_chunk, uint32_t p_end_chunk = UINT32_MAX, Args&&... p_args) noexcept
 			requires (std::is_nothrow_invocable_r_v<bool, t_func, uint32_t, t_types&..., Args...>)
 		{
-			visit_all_caller_<t_iteration, sse, for_each_transform>(std::forward<t_func>(p_func), p_start_chunk, p_end_chunk, std::forward<Args>(p_args)...);
+			visit_all_caller_<t_iteration, for_each_transform>(std::forward<t_func>(p_func), p_start_chunk, p_end_chunk, std::forward<Args>(p_args)...);
 		}
 
 
@@ -989,23 +1049,23 @@ namespace scw
 		SCW_FORCE_INLINE void for_each_chunk_while(t_func&& p_func, uint32_t p_start_chunk, uint32_t p_end_chunk = UINT32_MAX, Args&&... p_args) const noexcept
 			requires (std::is_nothrow_invocable_r_v<bool, t_func, uint32_t, const t_types&..., Args...>)
 		{
-			visit_all_caller_<t_iteration, sse, for_each_transform>(std::forward<t_func>(p_func), p_start_chunk, p_end_chunk, std::forward<Args>(p_args)...);
+			visit_all_caller_<t_iteration, for_each_transform>(std::forward<t_func>(p_func), p_start_chunk, p_end_chunk, std::forward<Args>(p_args)...);
 		}
 
 
-		template<iteration_concept t_iteration = dense_iterate, simd_concept t_simd = sse, class t_func, class... Args>
+		template<iteration_concept t_iteration = dense_iterate, class t_func, class... Args>
 		SCW_FORCE_INLINE void erase_if(t_func&& p_func, Args&&... p_args) noexcept
 			requires (std::is_nothrow_invocable_r_v<bool, t_func, uint32_t, t_types&..., Args...>)
 		{
-			visit_all_caller_<t_iteration, t_simd, erase_if_transform>(std::forward<t_func>(p_func), 0U, UINT32_MAX, std::forward<Args>(p_args)...);
+			visit_all_caller_<t_iteration, erase_if_transform>(std::forward<t_func>(p_func), 0U, UINT32_MAX, std::forward<Args>(p_args)...);
 		}
 
 
-		template<iteration_concept t_iteration = dense_iterate, simd_concept t_simd = sse, class t_func, class... Args>
+		template<iteration_concept t_iteration = dense_iterate, class t_func, class... Args>
 		SCW_FORCE_INLINE void erase_between_chunks_if(t_func&& p_func, uint32_t p_start_chunk, uint32_t p_end_chunk = UINT32_MAX, Args&&... p_args) noexcept
 			requires (std::is_nothrow_invocable_r_v<bool, t_func, uint32_t, t_types&..., Args...>)
 		{
-			visit_all_caller_<t_iteration, t_simd, erase_if_transform>(std::forward<t_func>(p_func), p_start_chunk, p_end_chunk, std::forward<Args>(p_args)...);
+			visit_all_caller_<t_iteration, erase_if_transform>(std::forward<t_func>(p_func), p_start_chunk, p_end_chunk, std::forward<Args>(p_args)...);
 		}
 
 	private: // IMPLEMENTATION
@@ -1263,7 +1323,7 @@ namespace scw
 
 			memset(reinterpret_cast<char*>(m_skip_data) + old_skip_bytes, 0xFF, skip_bytes_to_commit);
 
-			m_capacity = m_capacity + p_elements_to_commit;
+			m_capacity += p_elements_to_commit;
 		}
 
 
@@ -1327,7 +1387,6 @@ namespace scw
 			const size_t free_table_bytes_occupied = align_(free_table_page_offset + get_free_table_bytes_for_element_count_(static_cast<size_t>(p_index + 1U)), platform::os_page_size);
 			const size_t free_table_bytes_comitted = align_(free_table_page_offset + get_free_table_bytes_for_element_count_(m_capacity), platform::os_page_size);
 			const size_t free_table_bytes_to_decommit = free_table_bytes_comitted - free_table_bytes_occupied;
-
 
 			for (size_t index = 0ULL; index < c_last_type_index; ++index)
 			{
@@ -1428,25 +1487,25 @@ namespace scw
 
 				m_skip_data[m_free_list] = word;
 
+				++m_size;
+
 				if (word == UINT64_MAX) [[unlikely]]
 				{
 					m_free_list = m_free_table[m_free_list];
 				}
-
-				++m_size;
 
 				return slot;
 			}
 
 			const uint32_t slot = m_high_water_mark;
 
+			++m_high_water_mark;
+			++m_size;
+
 			if (slot + 1U >= m_capacity)
 			{
 				grow_(m_capacity);
 			}
-
-			++m_high_water_mark;
-			++m_size;
 
 			return slot;
 		}
@@ -1456,13 +1515,13 @@ namespace scw
 		{
 			const uint32_t slot = m_high_water_mark;
 
+			++m_high_water_mark;
+			++m_size;
+
 			if (slot + 1U >= m_capacity)
 			{
 				grow_(m_capacity);
 			}
-
-			++m_high_water_mark;
-			++m_size;
 
 			return slot;
 		}
@@ -1606,16 +1665,38 @@ namespace scw
 			const uint32_t chunk_index = p_index >> 6U;
 			const uint64_t word = m_skip_data[chunk_index];
 
-			--m_size;
-
-			m_skip_data[chunk_index] = _andn_u64(1ULL << (p_index & 63U), word);
+			m_skip_data[chunk_index] = _andn_u64(1ULL << static_cast<uint64_t>(p_index & 63U), word);
 
 			if constexpr (c_generational)
 			{
 				++m_generations[p_index];
 			}
 
+			--m_size;
+
 			if (word == UINT64_MAX) [[unlikely]]
+			{
+				::new(m_free_table + chunk_index) uint32_t(m_free_list);
+				m_free_list = chunk_index;
+			}
+		}
+
+
+		SCW_FORCE_INLINE void branchless_destroy_element_(uint32_t p_index, uint64_t p_bool) noexcept
+		{
+			const uint32_t chunk_index = p_index >> 6U;
+			const uint64_t word = m_skip_data[chunk_index];
+
+			m_skip_data[chunk_index] = _andn_u64(p_bool << static_cast<uint64_t>(p_index & 63U), word);
+
+			if constexpr (c_generational)
+			{
+				m_generations[p_index] += static_cast<uint32_t>(p_bool);
+			}
+
+			m_size -= static_cast<uint32_t>(p_bool);
+
+			if (word == UINT64_MAX && p_bool) [[unlikely]]
 			{
 				::new(m_free_table + chunk_index) uint32_t(m_free_list);
 				m_free_list = chunk_index;
@@ -1630,9 +1711,9 @@ namespace scw
 			{
 				const uint64_t word = m_skip_data[p_index];
 
-				m_size -= static_cast<uint32_t>(_mm_popcnt_u64(p_mask));
-
 				m_skip_data[p_index] = _andn_u64(p_mask, word);
+
+				m_size -= static_cast<uint32_t>(_mm_popcnt_u64(p_mask));
 
 				if (word == UINT64_MAX) [[unlikely]]
 				{
@@ -1649,11 +1730,11 @@ namespace scw
 				{
 					const uint64_t word = m_skip_data[p_index];
 
-					m_size -= static_cast<uint32_t>(_mm_popcnt_u64(p_mask));
-
 					m_skip_data[p_index] = _andn_u64(p_mask, word);
 
 					uint32_t* const base = m_generations + (p_index << 6U);
+
+					m_size -= static_cast<uint32_t>(_mm_popcnt_u64(p_mask));
 
 					if constexpr (std::same_as<t_simd, scaler>)
 					{
@@ -1729,35 +1810,35 @@ namespace scw
 		}
 
 
-		template<iteration_concept t_iteration, simd_concept t_simd, iteration_transform_concept t_iteration_transform, class t_func, class... Args>
+		template<iteration_concept t_iteration, iteration_transform_concept t_iteration_transform, class t_func, class... Args>
 		SCW_FORCE_INLINE void visit_all_caller_(t_func&& p_func, uint32_t p_start_chunk, uint32_t p_end_chunk, Args&&... p_args) noexcept
 		{
 			if constexpr (std::same_as<t_iteration, blind_iterate>)
 			{
-				blind_iterate_<t_iteration, t_simd, t_iteration_transform>(*this, std::forward<t_func>(p_func), p_start_chunk, p_end_chunk, std::forward<Args>(p_args)...);
+				blind_iterate_<t_iteration, t_iteration_transform>(*this, std::forward<t_func>(p_func), p_start_chunk, p_end_chunk, std::forward<Args>(p_args)...);
 			}
 			else
 			{
-				visit_all_<t_iteration, t_simd, t_iteration_transform>(*this, std::forward<t_func>(p_func), p_start_chunk, p_end_chunk, std::forward<Args>(p_args)...);
+				visit_all_<t_iteration, t_iteration_transform>(*this, std::forward<t_func>(p_func), p_start_chunk, p_end_chunk, std::forward<Args>(p_args)...);
 			}
 		}
 
 
-		template<iteration_concept t_iteration, simd_concept t_simd, iteration_transform_concept t_iteration_transform, class t_func, class... Args>
+		template<iteration_concept t_iteration, iteration_transform_concept t_iteration_transform, class t_func, class... Args>
 		SCW_FORCE_INLINE void visit_all_caller_(t_func&& p_func, uint32_t p_start_chunk, uint32_t p_end_chunk, Args&&... p_args) const noexcept
 		{
 			if constexpr (std::same_as<t_iteration, blind_iterate>)
 			{
-				blind_iterate_<t_iteration, t_simd, t_iteration_transform>(*this, std::forward<t_func>(p_func), p_start_chunk, p_end_chunk, std::forward<Args>(p_args)...);
+				blind_iterate_<t_iteration, t_iteration_transform>(*this, std::forward<t_func>(p_func), p_start_chunk, p_end_chunk, std::forward<Args>(p_args)...);
 			}
 			else
 			{
-				visit_all_<t_iteration, t_simd, t_iteration_transform>(*this, std::forward<t_func>(p_func), p_start_chunk, p_end_chunk, std::forward<Args>(p_args)...);
+				visit_all_<t_iteration, t_iteration_transform>(*this, std::forward<t_func>(p_func), p_start_chunk, p_end_chunk, std::forward<Args>(p_args)...);
 			}
 		}
 
 
-		template<iteration_concept t_iteration, simd_concept t_simd, iteration_transform_concept t_iteration_transform, class self, class t_func, class... Args>
+		template<iteration_concept t_iteration, iteration_transform_concept t_iteration_transform, class self, class t_func, class... Args>
 		SCW_FORCE_INLINE static void visit_all_(self& p_self, t_func&& p_func, uint32_t p_start_chunk, uint32_t p_end_chunk, Args&&... p_args) noexcept
 		{
 			constexpr static bool c_for_each_transform = std::same_as<t_iteration_transform, for_each_transform>;
@@ -1768,7 +1849,6 @@ namespace scw
 			uint64_t* word_pointer = p_self.m_skip_data + p_start_chunk;
 			uint64_t word = *word_pointer;
 			uint64_t offset = 0ULL;
-			uint64_t erase_word = 0ULL;
 
 			while (start < end) [[likely]]
 			{
@@ -1778,7 +1858,9 @@ namespace scw
 					{
 						for (offset = 0ULL; offset != 64ULL; ++offset)
 						{
-							const bool result = p_self.invoke_user_callback_(c_indices, p_self.m_data, p_func, start + offset, p_args...);
+							const size_t index = start + offset;
+
+							const bool result = p_self.invoke_user_callback_(c_indices, p_self.m_data, p_func, index, p_args...);
 
 							if constexpr (c_for_each_transform)
 							{
@@ -1789,14 +1871,26 @@ namespace scw
 							}
 							else if constexpr (c_erase_if_transform)
 							{
-								erase_word |= static_cast<uint64_t>(result) << offset;
+								*word_pointer = _andn_u64(static_cast<uint64_t>(result) << offset, *word_pointer);
+
+								if constexpr (c_generational)
+								{
+									p_self.m_generations[index] += static_cast<uint32_t>(result);
+								}
 							}
 						}
 
 						if constexpr (c_erase_if_transform)
 						{
-							p_self.template destroy_chunk_<t_simd>(static_cast<uint32_t>(start >> 6ULL), erase_word);
-							erase_word = 0ULL;
+							if (*word_pointer != UINT64_MAX)
+							{
+								const uint32_t chunk_index = static_cast<uint32_t>(start >> 6ULL);
+
+								::new(p_self.m_free_table + chunk_index) uint32_t(p_self.m_free_list);
+								p_self.m_free_list = chunk_index;
+							}
+
+							p_self.m_size -= static_cast<uint32_t>(64ULL - _mm_popcnt_u64(*word_pointer));
 						}
 
 						start += 64ULL;
@@ -1810,6 +1904,7 @@ namespace scw
 					}
 				}
 
+				const uint64_t erase_word = *word_pointer;
 #ifdef __GNUC__
 				if (word)
 				{
@@ -1818,7 +1913,9 @@ namespace scw
 						offset = _tzcnt_u64(word);
 						word = _blsr_u64(word);
 
-						const bool result = p_self.invoke_user_callback_(c_indices, p_self.m_data, p_func, start + offset, p_args...);
+						const size_t index = start + offset;
+
+						const bool result = p_self.invoke_user_callback_(c_indices, p_self.m_data, p_func, index, p_args...);
 
 						if constexpr (c_for_each_transform)
 						{
@@ -1829,7 +1926,12 @@ namespace scw
 						}
 						else if constexpr (c_erase_if_transform)
 						{
-							erase_word |= static_cast<uint64_t>(result) << offset;
+							*word_pointer = _andn_u64(static_cast<uint64_t>(result) << offset, *word_pointer);
+
+							if constexpr (c_generational)
+							{
+								p_self.m_generations[index] += static_cast<uint32_t>(result);
+							}
 						}
 
 						bool test;
@@ -1847,7 +1949,9 @@ namespace scw
 					offset = _tzcnt_u64(word);
 					word = _blsr_u64(word);
 
-					const bool result = p_self.invoke_user_callback_(c_indices, p_self.m_data, p_func, start + offset, p_args...);
+					const size_t index = start + offset;
+
+					const bool result = p_self.invoke_user_callback_(c_indices, p_self.m_data, p_func, index, p_args...);
 
 					if constexpr (c_for_each_transform)
 					{
@@ -1858,14 +1962,29 @@ namespace scw
 					}
 					else if constexpr (c_erase_if_transform)
 					{
-						erase_word |= static_cast<uint64_t>(result) << offset;
+						*word_pointer = _andn_u64(static_cast<uint64_t>(result) << offset, *word_pointer);
+
+						if constexpr (c_generational)
+						{
+							p_self.m_generations[index] += static_cast<uint32_t>(result);
+						}
 					}
 				}
 #endif
 				if constexpr (c_erase_if_transform)
 				{
-					p_self.template destroy_chunk_<t_simd>(static_cast<uint32_t>(start >> 6ULL), erase_word);
-					erase_word = 0ULL;
+					if constexpr (std::same_as<t_iteration, sparse_iterate>)
+					{
+						if (erase_word == UINT64_MAX && *word_pointer != UINT64_MAX)
+						{
+							const uint32_t chunk_index = static_cast<uint32_t>(start >> 6ULL);
+
+							::new(p_self.m_free_table + chunk_index) uint32_t(p_self.m_free_list);
+							p_self.m_free_list = chunk_index;
+						}
+					}
+
+					p_self.m_size -= static_cast<uint32_t>(_mm_popcnt_u64(erase_word) - _mm_popcnt_u64(*word_pointer));
 				}
 
 				do
@@ -1882,12 +2001,16 @@ namespace scw
 				return;
 			}
 
+			const uint64_t erase_word = *word_pointer;
+
 			offset = _tzcnt_u64(word);
 			const uint64_t end_offset = static_cast<uint64_t>(p_self.m_high_water_mark & 63U);
 
 			while (offset != end_offset)
 			{
-				const bool result = p_self.invoke_user_callback_(c_indices, p_self.m_data, p_func, start + offset, p_args...);
+				const size_t index = start + offset;
+
+				const bool result = p_self.invoke_user_callback_(c_indices, p_self.m_data, p_func, index, p_args...);
 
 				if constexpr (c_for_each_transform)
 				{
@@ -1898,7 +2021,14 @@ namespace scw
 				}
 				else if constexpr (c_erase_if_transform)
 				{
-					erase_word |= static_cast<uint64_t>(result) << offset;
+					*word_pointer = _andn_u64(static_cast<uint64_t>(result) << offset, *word_pointer);
+
+					if constexpr (c_generational)
+					{
+						p_self.m_generations[index] += static_cast<uint32_t>(result);
+					}
+
+					p_self.m_size -= static_cast<uint32_t>(result);
 				}
 
 				word = _blsr_u64(word);
@@ -1907,51 +2037,33 @@ namespace scw
 
 			if constexpr (c_erase_if_transform)
 			{
-				p_self.template destroy_chunk_<t_simd>(static_cast<uint32_t>(start >> 6ULL), erase_word);
+				if (erase_word == UINT64_MAX && *word_pointer != UINT64_MAX)
+				{
+					const uint32_t chunk_index = static_cast<uint32_t>(start >> 6ULL);
+
+					::new(p_self.m_free_table + chunk_index) uint32_t(p_self.m_free_list);
+					p_self.m_free_list = chunk_index;
+				}
+
+				p_self.m_size -= static_cast<uint32_t>(_mm_popcnt_u64(erase_word) - _mm_popcnt_u64(*word_pointer));
 			}
 		}
 
 
-		template<iteration_concept t_iteration, simd_concept t_simd, iteration_transform_concept t_iteration_transform, class self, class t_func, class... Args>
+		template<iteration_concept t_iteration, iteration_transform_concept t_iteration_transform, class self, class t_func, class... Args>
 		SCW_FORCE_INLINE static void blind_iterate_(self& p_self, t_func&& p_func, uint32_t p_start_chunk, uint32_t p_end_chunk, Args&&... p_args) noexcept
 		{
+			static_assert(std::same_as<t_iteration_transform, erase_if_transform>, "use scw::dense_iterate instead of scw::blind_iterate for erase_if");
+
 			size_t start = static_cast<size_t>(p_start_chunk << 6U);
 			const size_t end = p_end_chunk == UINT32_MAX ? p_self.m_high_water_mark : static_cast<size_t>(p_end_chunk << 6U);
 
-			if constexpr (std::same_as<t_iteration_transform, for_each_transform>)
+			for (; start != end; ++start)
 			{
-				for (; start != end; ++start)
+				if (!p_self.invoke_user_callback_(c_indices, p_self.m_data, p_func, start, p_args...))
 				{
-					if (!p_self.invoke_user_callback_(c_indices, p_self.m_data, p_func, start, p_args...))
-					{
-						return;
-					}
+					return;
 				}
-			}
-			else if constexpr (std::same_as<t_iteration_transform, erase_if_transform>)
-			{
-				const size_t chunks_end = p_end_chunk == UINT32_MAX ? static_cast<size_t>(p_self.m_high_water_mark & ~63U) : static_cast<size_t>(p_end_chunk << 6U);
-				uint64_t erase_word = 0ULL;
-
-				for (; start != chunks_end; start += 64ULL)
-				{
-					for (uint32_t offset = 0ULL; offset != 64ULL; ++offset)
-					{
-						erase_word |= static_cast<uint64_t>(p_self.invoke_user_callback_(c_indices, p_self.m_data, p_func, start + offset, p_args...)) << offset;
-					}
-
-					const uint32_t chunk_index = static_cast<uint32_t>(start >> 6ULL);
-					p_self.template destroy_chunk_<t_simd>(chunk_index, erase_word & p_self.get_bitmask(chunk_index));
-					erase_word = 0ULL;
-				}
-
-				for (; start != end; ++start)
-				{
-					erase_word |= static_cast<uint64_t>(p_self.invoke_user_callback_(c_indices, p_self.m_data, p_func, start, p_args...)) << (start & 63U);
-				}
-
-				const uint32_t chunk_index = static_cast<uint32_t>(start >> 6ULL);
-				p_self.template destroy_chunk_<t_simd>(chunk_index, erase_word & p_self.get_bitmask(chunk_index));
 			}
 		}
 
