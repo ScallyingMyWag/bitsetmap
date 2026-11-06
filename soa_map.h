@@ -822,8 +822,8 @@ namespace scw
 							element_offset = _tzcnt_u64(current_elements_word);
 							current_elements_word = _blsr_u64(current_elements_word);
 
-							const uint32_t hole_slot = hole_start + hole_offset;
-							const uint32_t element_slot = element_start + element_offset;
+							const uint32_t hole_slot = static_cast<uint32_t>(hole_start + hole_offset);
+							const uint32_t element_slot = static_cast<uint32_t>(element_start + element_offset);
 
 							[] <size_t... t_indices>(std::index_sequence<t_indices...>, void* const* m_data, size_t hole_slot, size_t element_slot) noexcept
 							{
@@ -2027,8 +2027,6 @@ namespace scw
 					{
 						p_self.m_generations[index] += static_cast<uint32_t>(result);
 					}
-
-					p_self.m_size -= static_cast<uint32_t>(result);
 				}
 
 				word = _blsr_u64(word);
@@ -2053,7 +2051,7 @@ namespace scw
 		template<iteration_concept t_iteration, iteration_transform_concept t_iteration_transform, class self, class t_func, class... Args>
 		SCW_FORCE_INLINE static void blind_iterate_(self& p_self, t_func&& p_func, uint32_t p_start_chunk, uint32_t p_end_chunk, Args&&... p_args) noexcept
 		{
-			static_assert(std::same_as<t_iteration_transform, erase_if_transform>, "use scw::dense_iterate instead of scw::blind_iterate for erase_if");
+			static_assert(std::same_as<t_iteration_transform, for_each_transform>, "use scw::dense_iterate instead of scw::blind_iterate for erase_if");
 
 			size_t start = static_cast<size_t>(p_start_chunk << 6U);
 			const size_t end = p_end_chunk == UINT32_MAX ? p_self.m_high_water_mark : static_cast<size_t>(p_end_chunk << 6U);
@@ -2366,7 +2364,16 @@ namespace scw
 			const uint32_t mask = 0U - in_bounds;
 			const uint32_t remap_handle = m_state.data[(p_old_handle - m_state.offset) & mask];
 
+#ifdef __GNUC__
+			if (in_bounds) [[likely]]
+			{
+				return remap_handle;
+			}
+			
+			return p_old_handle;
+#else
 			return in_bounds ? remap_handle : p_old_handle;
+#endif
 		}
 
 	private:
