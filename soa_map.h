@@ -860,7 +860,7 @@ namespace scw
 		COMPRESS_END:
 			if (m_high_water_mark)
 			{
-				memset(m_skip_data, 0xFF, get_skip_bytes_for_element_count_(m_high_water_mark - 1U));
+				memset(m_skip_data, 0xFF, get_skip_bytes_for_element_count_(m_high_water_mark));
 			}
 
 			m_free_list = UINT32_MAX;
@@ -920,10 +920,7 @@ namespace scw
 
 			decommit_pages_(index);
 
-			if (m_high_water_mark)
-			{
-				memset(m_skip_data, 0xFF, get_skip_bytes_for_element_count_(m_high_water_mark - 1U));
-			}
+			memset(m_skip_data, 0xFF, get_skip_bytes_for_element_count_(m_capacity));
 
 			m_free_list = UINT32_MAX;
 			m_high_water_mark = 0U;
