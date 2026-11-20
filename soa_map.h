@@ -65,7 +65,7 @@ namespace scw
 	concept use_generations_concept = std::same_as<T, use_generations> || std::same_as<T, no_generations>;
 #endif
 
-	struct scaler {};
+	struct scalar {};
 	struct sse {};
 	struct avx2 {};
 	struct avx512 {};
@@ -92,7 +92,7 @@ namespace scw
 #endif
 
 	template<class T>
-	concept simd_concept = std::same_as<T, scaler> || std::same_as<T, sse> || std::same_as<T, avx2> || std::same_as<T, avx512>;
+	concept simd_concept = std::same_as<T, scalar> || std::same_as<T, sse> || std::same_as<T, avx2> || std::same_as<T, avx512>;
 
 
 	template<class, const_iterator_concept>
@@ -761,7 +761,7 @@ namespace scw
 			return m_skip_data[p_index];
 		}
 
-		// to push using unckecked insertion functions
+		// to push using unchecked insertion functions
 		[[nodiscard]] uint32_t back_capacity() const noexcept
 		{
 			return m_capacity - m_high_water_mark;
@@ -1394,51 +1394,51 @@ namespace scw
 				return bytes_occupied_array;
 			}(c_indices, p_index, page_offsets_array);
 
-			const types_array bytes_comitted_array =
+			const types_array bytes_committed_array =
 				[] <size_t... t_indices>(std::index_sequence<t_indices...>, uint32_t m_capacity, const types_array & page_offsets_array) noexcept -> types_array
 			{
-				types_array bytes_comitted_array;
-				((bytes_comitted_array[t_indices] = precomputed_align_(page_offsets_array[t_indices] + get_bytes_for_element_count_(m_capacity, sizeof(type_<t_indices>)), platform::os_page_low_bits, platform::os_page_high_bits)), ...);
+				types_array bytes_committed_array;
+				((bytes_committed_array[t_indices] = precomputed_align_(page_offsets_array[t_indices] + get_bytes_for_element_count_(m_capacity, sizeof(type_<t_indices>)), platform::os_page_low_bits, platform::os_page_high_bits)), ...);
 
-				return bytes_comitted_array;
+				return bytes_committed_array;
 			}(c_indices, m_capacity, page_offsets_array);
 
 			types_array bytes_to_decommit_array =
-				[] <size_t... t_indices>(std::index_sequence<t_indices...>, const types_array & bytes_occupied_array, const types_array & bytes_comitted_array) noexcept -> types_array
+				[] <size_t... t_indices>(std::index_sequence<t_indices...>, const types_array & bytes_occupied_array, const types_array & bytes_committed_array) noexcept -> types_array
 			{
 				types_array bytes_to_decommit_array;
-				((bytes_to_decommit_array[t_indices] = bytes_comitted_array[t_indices] - bytes_occupied_array[t_indices]), ...);
+				((bytes_to_decommit_array[t_indices] = bytes_committed_array[t_indices] - bytes_occupied_array[t_indices]), ...);
 
 				return bytes_to_decommit_array;
-			}(c_indices, bytes_occupied_array, bytes_comitted_array);
+			}(c_indices, bytes_occupied_array, bytes_committed_array);
 
 			const size_t skip_page_offset = reinterpret_cast<uintptr_t>(m_skip_data) & platform::os_page_low_bits;
 			const size_t skip_bytes_occupied = precomputed_align_(skip_page_offset + get_skip_bytes_for_element_count_(static_cast<size_t>(p_index + 1U)), platform::os_page_low_bits, platform::os_page_high_bits);
-			const size_t skip_bytes_comitted = precomputed_align_(skip_page_offset + get_skip_bytes_for_element_count_(m_capacity), platform::os_page_low_bits, platform::os_page_high_bits);
-			size_t skip_bytes_to_decommit = skip_bytes_comitted - skip_bytes_occupied;
+			const size_t skip_bytes_committed = precomputed_align_(skip_page_offset + get_skip_bytes_for_element_count_(m_capacity), platform::os_page_low_bits, platform::os_page_high_bits);
+			size_t skip_bytes_to_decommit = skip_bytes_committed - skip_bytes_occupied;
 
 			size_t generation_page_offset;
 			size_t generation_bytes_occupied;
-			size_t generation_bytes_comitted;
+			size_t generation_bytes_committed;
 			size_t generation_bytes_to_decommit;
 			if constexpr (c_generational)
 			{
 				generation_page_offset = reinterpret_cast<uintptr_t>(m_generations) & platform::os_page_low_bits;
 				generation_bytes_occupied = precomputed_align_(generation_page_offset + get_generation_bytes_for_element_count_(static_cast<size_t>(p_index + 1U)), platform::os_page_low_bits, platform::os_page_high_bits);
-				generation_bytes_comitted = precomputed_align_(generation_page_offset + get_generation_bytes_for_element_count_(m_capacity), platform::os_page_low_bits, platform::os_page_high_bits);
-				generation_bytes_to_decommit = generation_bytes_comitted - generation_bytes_occupied;
+				generation_bytes_committed = precomputed_align_(generation_page_offset + get_generation_bytes_for_element_count_(m_capacity), platform::os_page_low_bits, platform::os_page_high_bits);
+				generation_bytes_to_decommit = generation_bytes_committed - generation_bytes_occupied;
 			}
 
 			const size_t free_table_page_offset = reinterpret_cast<uintptr_t>(m_free_table) & platform::os_page_low_bits;
 			const size_t free_table_bytes_occupied = precomputed_align_(free_table_page_offset + get_free_table_bytes_for_element_count_(static_cast<size_t>(p_index + 1U)), platform::os_page_low_bits, platform::os_page_high_bits);
-			const size_t free_table_bytes_comitted = precomputed_align_(free_table_page_offset + get_free_table_bytes_for_element_count_(m_capacity), platform::os_page_low_bits, platform::os_page_high_bits);
-			const size_t free_table_bytes_to_decommit = free_table_bytes_comitted - free_table_bytes_occupied;
+			const size_t free_table_bytes_committed = precomputed_align_(free_table_page_offset + get_free_table_bytes_for_element_count_(m_capacity), platform::os_page_low_bits, platform::os_page_high_bits);
+			const size_t free_table_bytes_to_decommit = free_table_bytes_committed - free_table_bytes_occupied;
 
 			for (size_t index = 0ULL; index < c_last_type_index; ++index)
 			{
 				if (bytes_to_decommit_array[index])
 				{
-					if (static_cast<char*>(m_data[index]) - page_offsets_array[index] + bytes_comitted_array[index] > static_cast<char*>(m_data[index + 1ULL]))
+					if (static_cast<char*>(m_data[index]) - page_offsets_array[index] + bytes_committed_array[index] > static_cast<char*>(m_data[index + 1ULL]))
 					{
 						bytes_to_decommit_array[index] -= platform::os_page_size;
 					}
@@ -1446,7 +1446,7 @@ namespace scw
 			}
 			if (bytes_to_decommit_array[c_last_type_index])
 			{
-				if (static_cast<char*>(m_data[c_last_type_index]) - page_offsets_array[c_last_type_index] + bytes_comitted_array[c_last_type_index] > reinterpret_cast<char*>(m_skip_data))
+				if (static_cast<char*>(m_data[c_last_type_index]) - page_offsets_array[c_last_type_index] + bytes_committed_array[c_last_type_index] > reinterpret_cast<char*>(m_skip_data))
 				{
 					bytes_to_decommit_array[c_last_type_index] -= platform::os_page_size;
 				}
@@ -1455,14 +1455,14 @@ namespace scw
 			{
 				if (skip_bytes_to_decommit)
 				{
-					if (reinterpret_cast<char*>(m_skip_data) - skip_page_offset + skip_bytes_comitted > reinterpret_cast<char*>(m_generations))
+					if (reinterpret_cast<char*>(m_skip_data) - skip_page_offset + skip_bytes_committed > reinterpret_cast<char*>(m_generations))
 					{
 						skip_bytes_to_decommit -= platform::os_page_size;
 					}
 				}
 				if (generation_bytes_to_decommit)
 				{
-					if (reinterpret_cast<char*>(m_generations) - generation_page_offset + generation_bytes_comitted > reinterpret_cast<char*>(m_free_table))
+					if (reinterpret_cast<char*>(m_generations) - generation_page_offset + generation_bytes_committed > reinterpret_cast<char*>(m_free_table))
 					{
 						generation_bytes_to_decommit -= platform::os_page_size;
 					}
@@ -1472,7 +1472,7 @@ namespace scw
 			{
 				if (skip_bytes_to_decommit)
 				{
-					if (reinterpret_cast<char*>(m_skip_data) - skip_page_offset + skip_bytes_comitted > reinterpret_cast<char*>(m_free_table))
+					if (reinterpret_cast<char*>(m_skip_data) - skip_page_offset + skip_bytes_committed > reinterpret_cast<char*>(m_free_table))
 					{
 						skip_bytes_to_decommit -= platform::os_page_size;
 					}
@@ -1782,7 +1782,7 @@ namespace scw
 
 					m_size -= static_cast<uint32_t>(_mm_popcnt_u64(p_mask));
 
-					if constexpr (std::same_as<t_simd, scaler>)
+					if constexpr (std::same_as<t_simd, scalar>)
 					{
 						while (p_mask)
 						{
