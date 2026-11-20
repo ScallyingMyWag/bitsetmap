@@ -102,10 +102,10 @@ namespace scw
 	class remap_table;
 
 
-	namespace platform
-	{
 #ifndef SCW_SHARED_PLATFORM_HELPERS
 #define SCW_SHARED_PLATFORM_HELPERS
+	namespace platform
+	{
 		inline size_t os_page_size;
 		inline size_t os_page_low_bits;
 		inline size_t os_page_high_bits;
@@ -138,8 +138,8 @@ namespace scw
 		{
 			[[maybe_unused]] static const bool _ = query_system_page_info();
 		}
-#endif
 	}
+#endif
 
 #ifndef SCW_GET_BIT
 #define SCW_GET_BIT
@@ -1833,14 +1833,15 @@ namespace scw
 						uint64_t low_index = _tzcnt_u64(p_mask) & ~15ULL;
 						const uint64_t high_index = 64ULL - _lzcnt_u64(p_mask);
 
+						const __m512i ONES = _mm512_set1_epi32(1);
+
 						for (; low_index < high_index; low_index += 16ULL)
 						{
 							void* const data = base + low_index;
 
 							__m512i GENERATIONS = _mm512_load_epi32(data);
 
-							const __m512i SUBTRACTION_MASK = _mm512_movm_epi32(static_cast<unsigned short>(p_mask >> low_index));
-							GENERATIONS = _mm512_sub_epi32(GENERATIONS, SUBTRACTION_MASK);
+							GENERATIONS = _mm512_mask_add_epi32(GENERATIONS, static_cast<unsigned short>(p_mask >> low_index), GENERATIONS, ONES);
 
 							_mm512_store_epi32(data, GENERATIONS);
 						}
@@ -2479,24 +2480,6 @@ namespace scw
 			return VirtualAlloc(reinterpret_cast<void*>(address & os_page_high_bits), precomputed_align_(p_size, (address & os_page_low_bits) + os_page_low_bits, os_page_high_bits), MEM_COMMIT, PAGE_READWRITE);
 		}
 
-
-		[[nodiscard]] LONG CALLBACK vectored_exception_handler_callback(PEXCEPTION_POINTERS p_exception_pointer)
-		{
-			const PEXCEPTION_RECORD exception_record = p_exception_pointer->ExceptionRecord;
-
-			if (exception_record->ExceptionCode != EXCEPTION_ACCESS_VIOLATION) [[unlikely]]
-			{
-				return EXCEPTION_CONTINUE_SEARCH;
-			}
-
-			if (!VirtualAlloc(reinterpret_cast<void*>(exception_record->ExceptionInformation[1ULL] & os_page_high_bits), os_page_size, MEM_COMMIT, PAGE_READWRITE)) [[unlikely]]
-			{
-				return EXCEPTION_CONTINUE_SEARCH;
-			}
-
-			return EXCEPTION_CONTINUE_EXECUTION;
-		}
-
 #else
 		using VirtualAlloc2ptr = PVOID(WINAPI*)(HANDLE, PVOID, SIZE_T, ULONG, ULONG, MEM_EXTENDED_PARAMETER*, ULONG);
 
@@ -2554,27 +2537,6 @@ namespace scw
 
 			return VirtualAlloc2_wrapper.VirtualAlloc2(NULL, reinterpret_cast<void*>(address & high_bits), precomputed_align_(p_size, (address & low_bits) + low_bits, high_bits), MEM_COMMIT, PAGE_READWRITE, NULL, NULL);
 		}
-
-
-		[[nodiscard]] LONG CALLBACK vectored_exception_handler_callback(PEXCEPTION_POINTERS p_exception_pointer)
-		{
-			constexpr static size_t page_size = 65'536ULL;
-			constexpr static size_t high_bits = ~(page_size - 1ULL);
-
-			const PEXCEPTION_RECORD exception_record = p_exception_pointer->ExceptionRecord;
-
-			if (exception_record->ExceptionCode != EXCEPTION_ACCESS_VIOLATION) [[unlikely]]
-			{
-				return EXCEPTION_CONTINUE_SEARCH;
-			}
-
-			if (!VirtualAlloc2_wrapper.VirtualAlloc2(NULL, reinterpret_cast<void*>(p_exception_pointer->ExceptionRecord->ExceptionInformation[1ULL] & high_bits), page_size, MEM_COMMIT, PAGE_READWRITE, NULL, NULL)) [[unlikely]]
-			{
-				return EXCEPTION_CONTINUE_SEARCH;
-			}
-
-			return EXCEPTION_CONTINUE_EXECUTION;
-		}
 #endif
 
 		[[nodiscard]] bool free(void* p_address, size_t p_size) noexcept
@@ -2586,14 +2548,6 @@ namespace scw
 		[[nodiscard]] bool decommit(void* p_address, size_t p_size) noexcept
 		{
 			return VirtualFree(p_address, p_size, MEM_DECOMMIT);
-		}
-
-		// don't call if you have your own access violation handling anywhere else in the entire executable
-		// this thing is blind and will attempt to commit every access violation
-		// just use the normal api
-		void register_access_violation_commitment_vectored_exception_handler() noexcept
-		{
-			AddVectoredExceptionHandler(1UL, vectored_exception_handler_callback);
 		}
 
 #else
