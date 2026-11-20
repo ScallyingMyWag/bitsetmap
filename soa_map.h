@@ -107,20 +107,25 @@ namespace scw
 #ifndef SCW_SHARED_PLATFORM_HELPERS
 #define SCW_SHARED_PLATFORM_HELPERS
 		inline size_t os_page_size;
+		inline size_t os_page_low_bits;
+		inline size_t os_page_high_bits;
 
 
-		[[nodiscard]] size_t get_page_size() noexcept;
+		[[nodiscard]] size_t get_page_size();
 		[[nodiscard]] void* reserve(size_t) noexcept;
 		[[nodiscard]] bool commit(void*, size_t) noexcept;
 		[[nodiscard]] bool free(void*, size_t) noexcept;
 		[[nodiscard]] bool decommit(void*, size_t) noexcept;
+		void register_access_violation_commitment_vectored_exception_handler() noexcept;
 
 
 		[[nodiscard]] inline bool query_system_page_info()
 		{
 			os_page_size = get_page_size();
+			os_page_low_bits = os_page_size - 1ULL;
+			os_page_high_bits = ~os_page_low_bits;
 
-			if (os_page_size & os_page_size - 1ULL)
+			if (os_page_size & os_page_low_bits)
 			{
 				throw std::bad_alloc();
 			}
@@ -136,17 +141,27 @@ namespace scw
 #endif
 	}
 
-#ifndef SCW_SHARED_HELPERS
-#define SCW_SHARED_HELPERS
+#ifndef SCW_GET_BIT
+#define SCW_GET_BIT
 	[[nodiscard]] inline bool get_bit_(const uint64_t* p_bitset, uint32_t p_index) noexcept
 	{
 		return p_bitset[p_index >> 6U] & 1ULL << static_cast<size_t>(p_index & 63U);
 	}
+#endif
 
-
+#ifndef SCW_ALIGN
+#define SCW_ALIGN
 	[[nodiscard]] constexpr inline size_t align_(size_t p_value, size_t p_alignment) noexcept
 	{
-		return (p_value + p_alignment - 1ULL) & ~(p_alignment - 1ULL);
+		return p_value + p_alignment - 1ULL & ~(p_alignment - 1ULL);
+	}
+#endif
+
+#ifndef SCW_PRECOMPUTED_ALIGN
+#define SCW_PRECOMPUTED_ALIGN
+	[[nodiscard]] constexpr inline size_t precomputed_align_(size_t p_value, size_t p_low_bits, size_t p_high_bits) noexcept
+	{
+		return p_value + p_low_bits & p_high_bits;
 	}
 #endif
 
@@ -322,6 +337,12 @@ namespace scw
 		//         // do whatever you want here to prepare your data for insertion
 		//         map.construct_in_slot(slot, 1, 2.0f, 3.0f, outside_local_var++); // call construct_in_slot with slot or nothing will be constructed
 		//     }, local_var);
+		// 
+		// you can also use this method to construct each element individually. the template for name resolving in a lambda
+		// this can skip some memory accesses if zero initialization is fine, it gives you forwarding, and in some cases it can reduce temporary stack stores with large types
+		// 
+		// map.template construct_in_slot<some index>(slot)
+		//
 		template<class t_func, class... Args>
 			requires (std::is_nothrow_invocable_v<t_func, soa_map&, uint32_t, Args...>)
 		void fill(uint32_t p_count, t_func&& p_func, Args&&... p_args)
@@ -339,6 +360,13 @@ namespace scw
 		SCW_FORCE_INLINE void construct_in_slot(uint32_t p_slot, const t_types&... p_values) noexcept
 		{
 			construct_in_slot_(p_slot, p_values...);
+		}
+
+
+		template<size_t t_index, class... Args>
+		SCW_FORCE_INLINE void construct_in_slot(uint32_t p_slot, Args&&... p_args) noexcept
+		{
+			::new(static_cast<type_<t_index>*>(m_data[t_index]) + p_slot) type_<t_index>(std::forward<Args>(p_args)...);
 		}
 
 
@@ -767,6 +795,14 @@ namespace scw
 			}
 		}
 
+
+		void advance(uint32_t p_size) noexcept
+		{
+			m_high_water_mark += p_size;
+			m_size += p_size;
+		}
+
+
 		// intended to break pointer stability
 		template<return_remap_table_concept t_return_table = return_table, class Allocator = std::allocator<uint32_t>>
 		std::conditional_t<std::same_as<t_return_table, return_table>, remap_table<Allocator>, no_table> compress(const Allocator& p_allocator = Allocator())
@@ -1013,6 +1049,9 @@ namespace scw
 		// observe that the function is variadic, pass references in after your lambda, make them parameters to your lambda
 		// this should help the compiler vectorize and stop writing your variable to the stack, as lambda references seem to make it paranoid
 		// about aliasing and obfuscates the code, reducing it's ability to vectorize
+		// 
+		// another quirk, the variadic arguments are forwarded all the way to your callback, so if you pass in rvalues and take lvalues, the arguments can be consumed on the first iteration
+		// why do this? it generated substantially better code on GCC and MSVC in my testing in many cases
 		//
 		// call like this:
 		// map.for_each_while([](uint32_t index, float& f, double& d, auto&, int& outside_local_var) noexcept // noexcept is mandatory, index is provided for deferred deletion pattern
@@ -1024,6 +1063,7 @@ namespace scw
 		// 
 		//         return true; // mandatory to continue, false will exit
 		//     }, local_var);
+		// 
 		template<iteration_concept t_iteration = dense_iterate, class t_func, class... Args>
 		SCW_FORCE_INLINE void for_each_while(t_func&& p_func, Args&&... p_args) noexcept
 			requires (std::is_nothrow_invocable_r_v<bool, t_func, uint32_t, t_types&..., Args...>)
@@ -1128,19 +1168,19 @@ namespace scw
 
 			[[maybe_unused]] static const bool _ = initialize_reserve_sizes_(c_aligned_data_bytes, c_aligned_skip_array_bytes, c_aligned_generation_bytes, c_aligned_free_table_bytes);
 
-			m_data[0] = platform::reserve(sm_reserved_bytes);
+			m_data[0ULL] = platform::reserve(sm_reserved_bytes);
 
-			if (!m_data[0]) [[unlikely]]
+			if (!m_data[0ULL]) [[unlikely]]
 			{
 				allocate_fail_();
 			}
 
 			[] <size_t... t_indices>(std::index_sequence<t_indices...>, void** m_data) noexcept
 			{
-				((m_data[t_indices + 1ULL] = reinterpret_cast<char*>(m_data[t_indices]) + c_aligned_data_bytes_array[t_indices]), ...);
+				((m_data[t_indices + 1ULL] = static_cast<char*>(m_data[t_indices]) + c_aligned_data_bytes_array[t_indices]), ...);
 			}(std::make_index_sequence<c_last_type_index>{}, m_data);
 
-			m_skip_data = reinterpret_cast<uint64_t*>(reinterpret_cast<char*>(m_data[0]) + c_aligned_data_bytes);
+			m_skip_data = reinterpret_cast<uint64_t*>(static_cast<char*>(m_data[0ULL]) + c_aligned_data_bytes);
 			if constexpr (c_generational)
 			{
 				m_generations = reinterpret_cast<uint32_t*>(reinterpret_cast<char*>(m_skip_data) + c_aligned_skip_array_bytes);
@@ -1189,23 +1229,26 @@ namespace scw
 
 		void copy_soa_map_(const soa_map& p_other)
 		{
-			m_free_list = p_other.m_free_list;
-			m_high_water_mark = p_other.m_high_water_mark;
-			m_size = p_other.m_size;
-
-			allocate_(m_high_water_mark);
-
-			[] <size_t... t_indices>(std::index_sequence<t_indices...>, void* const* m_data, uint32_t m_high_water_mark, const soa_map & p_other) noexcept
+			if (p_other.m_data[0LL])
 			{
-				(memcpy(m_data[t_indices], p_other.m_data[t_indices], static_cast<size_t>(m_high_water_mark) * sizeof(type_<t_indices>)), ...);
-			}(c_indices, m_data, m_high_water_mark, p_other);
+				m_free_list = p_other.m_free_list;
+				m_high_water_mark = p_other.m_high_water_mark;
+				m_size = p_other.m_size;
 
-			memcpy(m_skip_data, p_other.m_skip_data, get_skip_bytes_for_element_count_(m_high_water_mark));
-			if constexpr (c_generational)
-			{
-				memcpy(m_generations, p_other.m_generations, get_generation_bytes_for_element_count_(m_high_water_mark));
+				allocate_(m_high_water_mark);
+
+				[] <size_t... t_indices>(std::index_sequence<t_indices...>, void* const* m_data, uint32_t m_high_water_mark, const soa_map & p_other) noexcept
+				{
+					(memcpy(m_data[t_indices], p_other.m_data[t_indices], static_cast<size_t>(m_high_water_mark) * sizeof(type_<t_indices>)), ...);
+				}(c_indices, m_data, m_high_water_mark, p_other);
+
+				memcpy(m_skip_data, p_other.m_skip_data, get_skip_bytes_for_element_count_(m_high_water_mark));
+				if constexpr (c_generational)
+				{
+					memcpy(m_generations, p_other.m_generations, get_generation_bytes_for_element_count_(m_high_water_mark));
+				}
+				memcpy(m_free_table, p_other.m_free_table, get_free_table_bytes_for_element_count_(m_high_water_mark));
 			}
-			memcpy(m_free_table, p_other.m_free_table, get_free_table_bytes_for_element_count_(m_high_water_mark));
 		}
 
 
@@ -1239,14 +1282,14 @@ namespace scw
 		// this is okay, m_data is checked
 		void deallocate_() noexcept
 		{
-			if (m_data[0])
+			if (m_data[0ULL])
 			{
-				if (!platform::free(m_data[0], sm_reserved_bytes)) [[unlikely]]
+				if (!platform::free(m_data[0ULL], sm_reserved_bytes)) [[unlikely]]
 				{
 					std::abort();
 				}
 
-				m_data[0] = nullptr;
+				m_data[0ULL] = nullptr;
 			}
 		}
 
@@ -1293,7 +1336,7 @@ namespace scw
 
 				if (bytes_to_commit)
 				{
-					if (!platform::commit(reinterpret_cast<char*>(m_data[index]) + old_bytes_array[index], bytes_to_commit)) [[unlikely]]
+					if (!platform::commit(static_cast<char*>(m_data[index]) + old_bytes_array[index], bytes_to_commit)) [[unlikely]]
 					{
 						throw std::bad_alloc();
 					}
@@ -1337,7 +1380,7 @@ namespace scw
 				[] <size_t... t_indices>(std::index_sequence<t_indices...>, void* const* m_data) noexcept -> types_array
 			{
 				types_array page_offsets_array;
-				((page_offsets_array[t_indices] = reinterpret_cast<uintptr_t>(m_data[t_indices]) - _andn_u64(platform::os_page_size - 1ULL, reinterpret_cast<uintptr_t>(m_data[t_indices]))), ...);
+				((page_offsets_array[t_indices] = reinterpret_cast<uintptr_t>(m_data[t_indices]) & platform::os_page_low_bits), ...);
 
 				return page_offsets_array;
 			}(c_indices, m_data);
@@ -1346,7 +1389,7 @@ namespace scw
 				[] <size_t... t_indices>(std::index_sequence<t_indices...>, uint32_t p_index, const types_array & page_offsets_array) noexcept -> types_array
 			{
 				types_array bytes_occupied_array;
-				((bytes_occupied_array[t_indices] = align_(page_offsets_array[t_indices] + get_bytes_for_element_count_(p_index + 1U, sizeof(type_<t_indices>)), platform::os_page_size)), ...);
+				((bytes_occupied_array[t_indices] = precomputed_align_(page_offsets_array[t_indices] + get_bytes_for_element_count_(p_index + 1U, sizeof(type_<t_indices>)), platform::os_page_low_bits, platform::os_page_high_bits)), ...);
 
 				return bytes_occupied_array;
 			}(c_indices, p_index, page_offsets_array);
@@ -1355,7 +1398,7 @@ namespace scw
 				[] <size_t... t_indices>(std::index_sequence<t_indices...>, uint32_t m_capacity, const types_array & page_offsets_array) noexcept -> types_array
 			{
 				types_array bytes_comitted_array;
-				((bytes_comitted_array[t_indices] = align_(page_offsets_array[t_indices] + get_bytes_for_element_count_(m_capacity, sizeof(type_<t_indices>)), platform::os_page_size)), ...);
+				((bytes_comitted_array[t_indices] = precomputed_align_(page_offsets_array[t_indices] + get_bytes_for_element_count_(m_capacity, sizeof(type_<t_indices>)), platform::os_page_low_bits, platform::os_page_high_bits)), ...);
 
 				return bytes_comitted_array;
 			}(c_indices, m_capacity, page_offsets_array);
@@ -1369,9 +1412,9 @@ namespace scw
 				return bytes_to_decommit_array;
 			}(c_indices, bytes_occupied_array, bytes_comitted_array);
 
-			const size_t skip_page_offset = reinterpret_cast<uintptr_t>(m_skip_data) - _andn_u64(platform::os_page_size - 1ULL, reinterpret_cast<uintptr_t>(m_skip_data));
-			const size_t skip_bytes_occupied = align_(skip_page_offset + get_skip_bytes_for_element_count_(static_cast<size_t>(p_index + 1U)), platform::os_page_size);
-			const size_t skip_bytes_comitted = align_(skip_page_offset + get_skip_bytes_for_element_count_(m_capacity), platform::os_page_size);
+			const size_t skip_page_offset = reinterpret_cast<uintptr_t>(m_skip_data) & platform::os_page_low_bits;
+			const size_t skip_bytes_occupied = precomputed_align_(skip_page_offset + get_skip_bytes_for_element_count_(static_cast<size_t>(p_index + 1U)), platform::os_page_low_bits, platform::os_page_high_bits);
+			const size_t skip_bytes_comitted = precomputed_align_(skip_page_offset + get_skip_bytes_for_element_count_(m_capacity), platform::os_page_low_bits, platform::os_page_high_bits);
 			size_t skip_bytes_to_decommit = skip_bytes_comitted - skip_bytes_occupied;
 
 			size_t generation_page_offset;
@@ -1380,22 +1423,22 @@ namespace scw
 			size_t generation_bytes_to_decommit;
 			if constexpr (c_generational)
 			{
-				generation_page_offset = reinterpret_cast<uintptr_t>(m_generations) - _andn_u64(platform::os_page_size - 1ULL, reinterpret_cast<uintptr_t>(m_generations));
-				generation_bytes_occupied = align_(generation_page_offset + get_generation_bytes_for_element_count_(static_cast<size_t>(p_index + 1U)), platform::os_page_size);
-				generation_bytes_comitted = align_(generation_page_offset + get_generation_bytes_for_element_count_(m_capacity), platform::os_page_size);
+				generation_page_offset = reinterpret_cast<uintptr_t>(m_generations) & platform::os_page_low_bits;
+				generation_bytes_occupied = precomputed_align_(generation_page_offset + get_generation_bytes_for_element_count_(static_cast<size_t>(p_index + 1U)), platform::os_page_low_bits, platform::os_page_high_bits);
+				generation_bytes_comitted = precomputed_align_(generation_page_offset + get_generation_bytes_for_element_count_(m_capacity), platform::os_page_low_bits, platform::os_page_high_bits);
 				generation_bytes_to_decommit = generation_bytes_comitted - generation_bytes_occupied;
 			}
 
-			const size_t free_table_page_offset = reinterpret_cast<uintptr_t>(m_free_table) - _andn_u64(platform::os_page_size - 1ULL, reinterpret_cast<uintptr_t>(m_free_table));
-			const size_t free_table_bytes_occupied = align_(free_table_page_offset + get_free_table_bytes_for_element_count_(static_cast<size_t>(p_index + 1U)), platform::os_page_size);
-			const size_t free_table_bytes_comitted = align_(free_table_page_offset + get_free_table_bytes_for_element_count_(m_capacity), platform::os_page_size);
+			const size_t free_table_page_offset = reinterpret_cast<uintptr_t>(m_free_table) & platform::os_page_low_bits;
+			const size_t free_table_bytes_occupied = precomputed_align_(free_table_page_offset + get_free_table_bytes_for_element_count_(static_cast<size_t>(p_index + 1U)), platform::os_page_low_bits, platform::os_page_high_bits);
+			const size_t free_table_bytes_comitted = precomputed_align_(free_table_page_offset + get_free_table_bytes_for_element_count_(m_capacity), platform::os_page_low_bits, platform::os_page_high_bits);
 			const size_t free_table_bytes_to_decommit = free_table_bytes_comitted - free_table_bytes_occupied;
 
 			for (size_t index = 0ULL; index < c_last_type_index; ++index)
 			{
 				if (bytes_to_decommit_array[index])
 				{
-					if (reinterpret_cast<char*>(m_data[index]) - page_offsets_array[index] + bytes_comitted_array[index] > reinterpret_cast<char*>(m_data[index + 1ULL]))
+					if (static_cast<char*>(m_data[index]) - page_offsets_array[index] + bytes_comitted_array[index] > static_cast<char*>(m_data[index + 1ULL]))
 					{
 						bytes_to_decommit_array[index] -= platform::os_page_size;
 					}
@@ -1403,7 +1446,7 @@ namespace scw
 			}
 			if (bytes_to_decommit_array[c_last_type_index])
 			{
-				if (reinterpret_cast<char*>(m_data[c_last_type_index]) - page_offsets_array[c_last_type_index] + bytes_comitted_array[c_last_type_index] > reinterpret_cast<char*>(m_skip_data))
+				if (static_cast<char*>(m_data[c_last_type_index]) - page_offsets_array[c_last_type_index] + bytes_comitted_array[c_last_type_index] > reinterpret_cast<char*>(m_skip_data))
 				{
 					bytes_to_decommit_array[c_last_type_index] -= platform::os_page_size;
 				}
@@ -1442,7 +1485,7 @@ namespace scw
 
 				if (bytes_to_decommit)
 				{
-					if (!platform::decommit(reinterpret_cast<char*>(m_data[index]) - page_offsets_array[index] + bytes_occupied_array[index], bytes_to_decommit)) [[unlikely]]
+					if (!platform::decommit(static_cast<char*>(m_data[index]) - page_offsets_array[index] + bytes_occupied_array[index], bytes_to_decommit)) [[unlikely]]
 					{
 						std::abort();
 					}
@@ -1502,13 +1545,13 @@ namespace scw
 
 			const uint32_t slot = m_high_water_mark;
 
-			++m_high_water_mark;
-			++m_size;
-
 			if (slot + 1U >= m_capacity)
 			{
 				grow_(m_capacity);
 			}
+
+			++m_high_water_mark;
+			++m_size;
 
 			return slot;
 		}
@@ -1518,13 +1561,13 @@ namespace scw
 		{
 			const uint32_t slot = m_high_water_mark;
 
-			++m_high_water_mark;
-			++m_size;
-
 			if (slot + 1U >= m_capacity)
 			{
 				grow_(m_capacity);
 			}
+
+			++m_high_water_mark;
+			++m_size;
 
 			return slot;
 		}
@@ -1556,7 +1599,7 @@ namespace scw
 				for (uint32_t count = 0U; count < free_slots && count < p_count; ++count)
 				{
 					const uint64_t offset = _tzcnt_u64(word);
-					p_func(*this, static_cast<uint32_t>(scaled_index + offset), p_args...);
+					p_func(*this, static_cast<uint32_t>(scaled_index + offset), std::forward<Args>(p_args)...);
 					word = _blsr_u64(word);
 				}
 
@@ -1634,7 +1677,7 @@ namespace scw
 					{
 						for (uint32_t index = 0U; index < p_count; ++index)
 						{
-							::new(reinterpret_cast<type_<t_indices>*>(m_data[t_indices]) + m_high_water_mark) type_<t_indices>(p_value);
+							::new(static_cast<type_<t_indices>*>(m_data[t_indices]) + m_high_water_mark) type_<t_indices>(p_value);
 							++m_high_water_mark;
 						}
 					}(m_data, m_high_water_mark, p_count, p_values), ...);
@@ -1648,7 +1691,7 @@ namespace scw
 		{
 			[] <size_t... t_indices>(std::index_sequence<t_indices...>, void* const* m_data, uint32_t p_slot, const auto&... p_values) noexcept
 			{
-				(::new(reinterpret_cast<type_<t_indices>*>(m_data[t_indices]) + p_slot) type_<t_indices>(p_values), ...);
+				(::new(static_cast<type_<t_indices>*>(m_data[t_indices]) + p_slot) type_<t_indices>(p_values), ...);
 			}(c_indices, m_data, p_slot, p_values...);
 
 			if constexpr (c_generational)
@@ -1863,7 +1906,7 @@ namespace scw
 						{
 							const size_t index = start + offset;
 
-							const bool result = p_self.invoke_user_callback_(c_indices, p_self.m_data, p_func, index, p_args...);
+							const bool result = p_self.invoke_user_callback_(c_indices, p_self.m_data, p_func, index, std::forward<Args>(p_args)...);
 
 							if constexpr (c_for_each_transform)
 							{
@@ -1918,7 +1961,7 @@ namespace scw
 
 						const size_t index = start + offset;
 
-						const bool result = p_self.invoke_user_callback_(c_indices, p_self.m_data, p_func, index, p_args...);
+						const bool result = p_self.invoke_user_callback_(c_indices, p_self.m_data, p_func, index, std::forward<Args>(p_args)...);
 
 						if constexpr (c_for_each_transform)
 						{
@@ -1954,7 +1997,7 @@ namespace scw
 
 					const size_t index = start + offset;
 
-					const bool result = p_self.invoke_user_callback_(c_indices, p_self.m_data, p_func, index, p_args...);
+					const bool result = p_self.invoke_user_callback_(c_indices, p_self.m_data, p_func, index, std::forward<Args>(p_args)...);
 
 					if constexpr (c_for_each_transform)
 					{
@@ -2013,7 +2056,7 @@ namespace scw
 			{
 				const size_t index = start + offset;
 
-				const bool result = p_self.invoke_user_callback_(c_indices, p_self.m_data, p_func, index, p_args...);
+				const bool result = p_self.invoke_user_callback_(c_indices, p_self.m_data, p_func, index, std::forward<Args>(p_args)...);
 
 				if constexpr (c_for_each_transform)
 				{
@@ -2061,7 +2104,7 @@ namespace scw
 
 			for (; start != end; ++start)
 			{
-				if (!p_self.invoke_user_callback_(c_indices, p_self.m_data, p_func, start, p_args...))
+				if (!p_self.invoke_user_callback_(c_indices, p_self.m_data, p_func, start, std::forward<Args>(p_args)...))
 				{
 					return;
 				}
@@ -2070,16 +2113,16 @@ namespace scw
 
 
 		template<size_t... t_indices, class t_func, class... Args>
-		SCW_FORCE_INLINE [[nodiscard]] bool invoke_user_callback_(std::index_sequence<t_indices...>, void* const* m_data, t_func& p_func, size_t p_index, Args&... p_args) noexcept
+		SCW_FORCE_INLINE [[nodiscard]] bool invoke_user_callback_(std::index_sequence<t_indices...>, void* const* m_data, t_func& p_func, size_t p_index, Args&&... p_args) noexcept
 		{
-			return p_func(static_cast<uint32_t>(p_index), static_cast<type_<t_indices>*>(m_data[t_indices])[p_index]..., p_args...);
+			return p_func(static_cast<uint32_t>(p_index), static_cast<type_<t_indices>*>(m_data[t_indices])[p_index]..., std::forward<Args>(p_args)...);
 		}
 
 
 		template<size_t... t_indices, class t_func, class... Args>
-		SCW_FORCE_INLINE [[nodiscard]] bool invoke_user_callback_(std::index_sequence<t_indices...>, const void* const* m_data, t_func& p_func, size_t p_index, Args&... p_args) const noexcept
+		SCW_FORCE_INLINE [[nodiscard]] bool invoke_user_callback_(std::index_sequence<t_indices...>, const void* const* m_data, t_func& p_func, size_t p_index, Args&&... p_args) const noexcept
 		{
-			return p_func(static_cast<uint32_t>(p_index), static_cast<const type_<t_indices>*>(m_data[t_indices])[p_index]..., p_args...);
+			return p_func(static_cast<uint32_t>(p_index), static_cast<const type_<t_indices>*>(m_data[t_indices])[p_index]..., std::forward<Args>(p_args)...);
 		}
 
 
@@ -2118,7 +2161,7 @@ namespace scw
 		{
 			platform::initialize_system_page_data();
 
-			sm_reserved_bytes = align_(p_aligned_data_bytes + p_skip_array_bytes + p_generation_bytes + p_free_table_bytes, platform::os_page_size);
+			sm_reserved_bytes = precomputed_align_(p_aligned_data_bytes + p_skip_array_bytes + p_generation_bytes + p_free_table_bytes, platform::os_page_low_bits, platform::os_page_high_bits);
 
 			return false;
 		}
@@ -2233,7 +2276,7 @@ namespace scw
 			{
 				m_state.data = m_state.allocate(m_state.size + m_state.bitset_size + 1ULL);
 				m_state.offset_data = m_state.data - p_other.m_state.offset;
-				m_state.deletion_data = reinterpret_cast<uint64_t*>(align_(reinterpret_cast<size_t>(m_state.data + m_state.size), 8ULL));
+				m_state.deletion_data = reinterpret_cast<uint64_t*>(align_(reinterpret_cast<uintptr_t>(m_state.data + m_state.size), 8ULL));
 				memcpy(m_state.data, p_other.m_state.data, (m_state.size + m_state.bitset_size + 1ULL) * sizeof(uint32_t));
 				memcpy(m_state.deletion_data, p_other.m_state.deletion_data, m_state.bitset_size * sizeof(uint32_t));
 			}
@@ -2249,7 +2292,7 @@ namespace scw
 				if (new_state.data)
 				{
 					new_state.data = new_state.allocate(new_state.size + new_state.bitset_size + 1ULL);
-					new_state.deletion_data = reinterpret_cast<uint64_t*>(align_(reinterpret_cast<size_t>(new_state.data + new_state.size), 8ULL));
+					new_state.deletion_data = reinterpret_cast<uint64_t*>(align_(reinterpret_cast<uintptr_t>(new_state.data + new_state.size), 8ULL));
 					new_state.offset_data = new_state.data - p_other.m_state.offset;
 
 					memcpy(new_state.data, p_other.m_state.data, (new_state.size + new_state.bitset_size + 1ULL) * sizeof(uint32_t));
@@ -2339,7 +2382,7 @@ namespace scw
 			m_state.bitset_size = ((((p_high_water_mark - 1ULL) >> 6ULL) + 1ULL) * 2ULL);
 			m_state.data = m_state.allocate(m_state.size + m_state.bitset_size + 1ULL);
 			m_state.offset_data = m_state.data - p_element_count;
-			m_state.deletion_data = reinterpret_cast<uint64_t*>(align_(reinterpret_cast<size_t>(m_state.data + m_state.size), 8ULL));
+			m_state.deletion_data = reinterpret_cast<uint64_t*>(align_(reinterpret_cast<uintptr_t>(m_state.data + m_state.size), 8ULL));
 			m_state.offset = p_element_count;
 
 			memcpy(m_state.deletion_data, p_deletion_data, m_state.bitset_size * sizeof(uint32_t));
@@ -2413,7 +2456,8 @@ namespace scw
 	namespace platform
 	{
 #ifdef _WIN32
-		[[nodiscard]] size_t get_page_size() noexcept
+#ifdef SCW_USE_DEFAULT_PAGE_SIZE
+		[[nodiscard]] size_t get_page_size()
 		{
 			SYSTEM_INFO system_info;
 			GetSystemInfo(&system_info);
@@ -2430,9 +2474,108 @@ namespace scw
 
 		[[nodiscard]] bool commit(void* p_address, size_t p_size) noexcept
 		{
-			return VirtualAlloc(p_address, p_size, MEM_COMMIT, PAGE_READWRITE);
+			const uintptr_t address = reinterpret_cast<uintptr_t>(p_address);
+
+			return VirtualAlloc(reinterpret_cast<void*>(address & os_page_high_bits), precomputed_align_(p_size, (address & os_page_low_bits) + os_page_low_bits, os_page_high_bits), MEM_COMMIT, PAGE_READWRITE);
 		}
 
+
+		[[nodiscard]] LONG CALLBACK vectored_exception_handler_callback(PEXCEPTION_POINTERS p_exception_pointer)
+		{
+			const PEXCEPTION_RECORD exception_record = p_exception_pointer->ExceptionRecord;
+
+			if (exception_record->ExceptionCode != EXCEPTION_ACCESS_VIOLATION) [[unlikely]]
+			{
+				return EXCEPTION_CONTINUE_SEARCH;
+			}
+
+			if (!VirtualAlloc(reinterpret_cast<void*>(exception_record->ExceptionInformation[1ULL] & os_page_high_bits), os_page_size, MEM_COMMIT, PAGE_READWRITE)) [[unlikely]]
+			{
+				return EXCEPTION_CONTINUE_SEARCH;
+			}
+
+			return EXCEPTION_CONTINUE_EXECUTION;
+		}
+
+#else
+		using VirtualAlloc2ptr = PVOID(WINAPI*)(HANDLE, PVOID, SIZE_T, ULONG, ULONG, MEM_EXTENDED_PARAMETER*, ULONG);
+
+
+		struct VirtualAlloc2_handler
+		{
+			HMODULE KernelBase_dll = NULL;
+			VirtualAlloc2ptr VirtualAlloc2 = nullptr;
+
+
+			~VirtualAlloc2_handler() noexcept
+			{
+				if (KernelBase_dll)
+				{
+					FreeLibrary(KernelBase_dll); // if it fails, oh well
+				}
+			}
+		};
+
+
+		VirtualAlloc2_handler VirtualAlloc2_wrapper;
+
+
+		[[nodiscard]] size_t get_page_size()
+		{
+			VirtualAlloc2_wrapper.KernelBase_dll = LoadLibraryW(L"KernelBase.dll");
+
+			if (!VirtualAlloc2_wrapper.KernelBase_dll)
+			{
+				throw std::bad_alloc();
+			}
+
+			VirtualAlloc2_wrapper.VirtualAlloc2 = reinterpret_cast<VirtualAlloc2ptr>(GetProcAddress(VirtualAlloc2_wrapper.KernelBase_dll, "VirtualAlloc2"));
+
+			if (!VirtualAlloc2_wrapper.VirtualAlloc2)
+			{
+				throw std::bad_alloc();
+			}
+
+			return 65'536ULL;
+		}
+
+
+		[[nodiscard]] void* reserve(size_t p_size) noexcept
+		{
+			return VirtualAlloc2_wrapper.VirtualAlloc2(NULL, NULL, p_size, MEM_RESERVE | MEM_64K_PAGES, PAGE_READWRITE, NULL, NULL);
+		}
+
+
+		[[nodiscard]] bool commit(void* p_address, size_t p_size) noexcept
+		{
+			constexpr static size_t low_bits = 65'536ULL - 1ULL;
+			constexpr static size_t high_bits = ~low_bits;
+			const uintptr_t address = reinterpret_cast<uintptr_t>(p_address);
+
+			return VirtualAlloc2_wrapper.VirtualAlloc2(NULL, reinterpret_cast<void*>(address & high_bits), precomputed_align_(p_size, (address & low_bits) + low_bits, high_bits), MEM_COMMIT, PAGE_READWRITE, NULL, NULL);
+		}
+
+
+		[[nodiscard]] LONG CALLBACK vectored_exception_handler_callback(PEXCEPTION_POINTERS p_exception_pointer)
+		{
+			constexpr static size_t page_size = 65'536ULL;
+			constexpr static size_t high_bits = ~(page_size - 1ULL);
+
+			const PEXCEPTION_RECORD exception_record = p_exception_pointer->ExceptionRecord;
+
+			if (exception_record->ExceptionCode != EXCEPTION_ACCESS_VIOLATION) [[unlikely]]
+			{
+				return EXCEPTION_CONTINUE_SEARCH;
+			}
+
+			if (!VirtualAlloc2_wrapper.VirtualAlloc2(NULL, reinterpret_cast<void*>(p_exception_pointer->ExceptionRecord->ExceptionInformation[1ULL] & high_bits), page_size, MEM_COMMIT, PAGE_READWRITE, NULL, NULL)) [[unlikely]]
+			{
+				return EXCEPTION_CONTINUE_SEARCH;
+			}
+
+			return EXCEPTION_CONTINUE_EXECUTION;
+		}
+#endif
 
 		[[nodiscard]] bool free(void* p_address, size_t p_size) noexcept
 		{
@@ -2445,8 +2588,16 @@ namespace scw
 			return VirtualFree(p_address, p_size, MEM_DECOMMIT);
 		}
 
+		// don't call if you have your own access violation handling anywhere else in the entire executable
+		// this thing is blind and will attempt to commit every access violation
+		// just use the normal api
+		void register_access_violation_commitment_vectored_exception_handler() noexcept
+		{
+			AddVectoredExceptionHandler(1UL, vectored_exception_handler_callback);
+		}
+
 #else
-		[[nodiscard]] size_t get_page_size() noexcept
+		[[nodiscard]] size_t get_page_size()
 		{
 			return static_cast<size_t>(getpagesize());
 		}
@@ -2476,6 +2627,9 @@ namespace scw
 		{
 			return !madvise(p_address, p_size, MADV_DONTNEED);
 		}
+
+
+		void register_access_violation_commitment_vectored_exception_handler() noexcept {}
 #endif
 	}
 }
